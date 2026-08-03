@@ -2,6 +2,10 @@
 node_modules/
 dist/
 
+# 运行时数据（LanceDB 向量库落盘目录）
+data/
+.lancedb-*
+
 # 本地环境
 *.local
 .DS_Store

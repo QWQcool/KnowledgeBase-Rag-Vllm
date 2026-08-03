@@ -124,6 +124,85 @@ export const ChatResponse = z.object({
 });
 export type ChatResponse = z.infer<typeof ChatResponse>;
 
+/* ===================== M2 流水线：分块 / 摄入 / 检索 ===================== */
+
+/** 文档分块：一个 chunk = 一个可检索的最小单元（M2 起核心概念） */
+export const DocumentChunk = z.object({
+  /** 全局唯一 chunk id（建议 `${documentId}#${index}`） */
+  id: z.string().min(1),
+  /** 所属文档 */
+  documentId: z.string().min(1),
+  /** 在文档内的顺序号（0 起） */
+  index: z.number().int().nonnegative(),
+  /** 分块正文 */
+  content: z.string(),
+  /** 来源元数据：如标题层级、页码（M3 引用溯源用） */
+  source: z
+    .object({
+      title: z.string().optional(),
+      heading: z.string().optional(),
+      page: z.number().int().nonnegative().optional(),
+    })
+    .optional(),
+});
+export type DocumentChunk = z.infer<typeof DocumentChunk>;
+
+/** 分块策略：M2 先实现二选一（heading 按标题 / fixed 固定长度），可配置 */
+export const ChunkStrategyType = z.enum(["heading", "fixed"]);
+export type ChunkStrategyType = z.infer<typeof ChunkStrategyType>;
+
+/** 摄入（ingest）请求：上传/提交文档内容 */
+export const IngestRequest = z.object({
+  /** 上传文件名（含扩展名，决定解析器） */
+  filename: z.string().min(1),
+  /** 原文内容（M2 先走文本；PDF 由解析器提取） */
+  content: z.string().min(1),
+  /** 分块策略；缺省 fixed */
+  chunkStrategy: ChunkStrategyType.optional(),
+  /** 固定长度分块的大小（仅 chunkStrategy=fixed 时生效，缺省 500） */
+  chunkSize: z.number().int().positive().optional(),
+  /** 入库目标知识库（与 query 的 knowledgeBaseId 对齐，缺省 "default"） */
+  knowledgeBaseId: z.string().min(1).optional(),
+});
+export type IngestRequest = z.infer<typeof IngestRequest>;
+
+/** 摄入响应 */
+export const IngestResponse = z.object({
+  /** 新建/更新后的文档对象 */
+  document: Document,
+  /** 产生的分块 */
+  chunks: z.array(DocumentChunk),
+  chunkCount: z.number().int().nonnegative(),
+});
+export type IngestResponse = z.infer<typeof IngestResponse>;
+
+/** 单条检索命中 */
+export const RetrievalHit = z.object({
+  chunk: DocumentChunk,
+  /** 相关度分数（越大越相关；实现可归一化到 0~1） */
+  score: z.number(),
+});
+export type RetrievalHit = z.infer<typeof RetrievalHit>;
+
+/** 检索请求（query 的内部步骤/独立调试端点用） */
+export const RetrieveRequest = z.object({
+  question: z.string().min(1),
+  knowledgeBaseId: z.string().min(1),
+  /** top-k 检索条数，缺省 5 */
+  topK: z.number().int().positive().max(50).optional(),
+  /** 相关度阈值：低于此 score 的命中视为无关（过滤后可能不足 topK；缺省不过滤） */
+  minScore: z.number().min(0).max(1).optional(),
+});
+export type RetrieveRequest = z.infer<typeof RetrieveRequest>;
+
+/** 检索响应 */
+export const RetrieveResponse = z.object({
+  hits: z.array(RetrievalHit),
+  /** embedding 耗时/检索耗时等诊断信息（M5 回填性能数字） */
+  diagnostics: z.record(z.string(), z.number()).optional(),
+});
+export type RetrieveResponse = z.infer<typeof RetrieveResponse>;
+
 /* ===================== 分页（后续列表端点用，字段占位） ===================== */
 
 export const Page = z.object({
