@@ -34,10 +34,10 @@ const SNIPPET_MAX_LEN = 200;
 
 /**
  * 无命中判定阈值：score < 此值视为无关。M2 实测（transformers+中文，
- * all-MiniLM-L6-v2，L2→score 映射）：相关片段 0.4917~0.5222，
- * 无关 0.4448~0.4624——0.48 可干净切开两类。可用 RAG_MIN_SCORE 覆盖。
+ * all-MiniLM-L6-v2）：TriviumDB 余弦相似度，相关片段 0.41~0.53，
+ * 无关 0.34~0.42——0.45 是合理分界（宁缺毋滥，防编造）。可用 RAG_MIN_SCORE 覆盖。
  */
-export const DEFAULT_MIN_SCORE = 0.48;
+export const DEFAULT_MIN_SCORE = 0.45;
 
 export function createQueryService(deps: QueryServiceDeps): QueryService {
   const { retrieveService, llmProvider } = deps;

@@ -7,7 +7,7 @@ import {
 import { Hono } from "hono";
 import type { AppDeps, AppHandlers } from "./app";
 import { createEmbeddingProvider } from "./infra/embedding";
-import { LanceDBStore } from "./infra/lancedb-store";
+import { TriviumDBStore } from "./infra/triviumdb-store";
 import { IngestService } from "./ingest/ingest-service";
 import { RetrieveService } from "./retrieval/retrieve-service";
 import { createLLMProvider } from "./query/llm-provider";
@@ -16,7 +16,7 @@ import { createLLMProvider } from "./query/llm-provider";
  * bootstrap.ts —— 生产依赖组装（编排层）
  *
  * app.ts 保持纯函数（测试注入 mock），这里负责把真实实现串成完整流水线：
- *   Transformers/Mock embedding + LanceDB + IngestService + RetrieveService + LLM
+ *   Transformers/Mock embedding + TriviumDB + IngestService + RetrieveService + LLM
  * 环境变量：
  *   RAG_EMBEDDING=mock|transformers   （缺省 mock：离线/CI 稳，transformers 需下载模型）
  *   LLM_PROVIDER=mock|openai          （缺省 mock；openai 需 OPENAI_BASE_URL/KEY，M4 指向 llama-server）
@@ -26,6 +26,8 @@ export interface ProductionDeps {
   knowledgeBaseId: string;
   embedding: "mock" | "transformers";
   llm: "mock" | "openai";
+  /** 向量库数据目录（测试注入临时目录用；缺省读 TRIVIUM_DATA_DIR/config） */
+  dataDir?: string;
 }
 
 export function createProductionDeps(
@@ -35,10 +37,13 @@ export function createProductionDeps(
     knowledgeBaseId: overrides.knowledgeBaseId ?? "default",
     embedding: overrides.embedding ?? (process.env.RAG_EMBEDDING as any) ?? "mock",
     llm: overrides.llm ?? (process.env.LLM_PROVIDER as any) ?? "mock",
+    dataDir: overrides.dataDir,
   };
 
   const embedding = createEmbeddingProvider(cfg.embedding);
-  const store = new LanceDBStore();
+  const store = new TriviumDBStore(
+    cfg.dataDir !== undefined ? { dataDir: cfg.dataDir } : undefined,
+  );
   const retrieveService = new RetrieveService(embedding, store);
   const llmProvider = createLLMProvider(cfg.llm);
 

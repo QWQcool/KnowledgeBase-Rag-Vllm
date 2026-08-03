@@ -20,7 +20,7 @@ export interface EmbeddingProvider {
   embed(texts: string[]): Promise<number[][]>;
 }
 
-/** 向量库接口（可替换实现：LanceDB / 内存版 / sqlite-vec） */
+/** 向量库接口（可替换实现：TriviumDB / LanceDB / 内存版 / sqlite-vec） */
 export interface VectorStore {
   /** 初始化（建库/连库），重复调用应幂等 */
   init(knowledgeBaseId: string): Promise<void>;

@@ -10,7 +10,7 @@
 | 前端 | TypeScript + React + Vite | 问答页、知识库管理、三态主题（system/light/dark） |
 | 后端 | TypeScript + Hono/Fastify | 文档摄入、检索编排、SSE 流式 |
 | 推理层 | **C++ llama.cpp（llama-server）** | 本地大模型，OpenAI 兼容 HTTP API |
-| 向量库 | LanceDB / sqlite-vec | 本地轻量内嵌，无原生编译坑 |
+| 向量库 | **TriviumDB**（Rust 嵌入式：向量+图+文档） | 本地单文件，napi-rs 预编译绑定；替换了初版 LanceDB（见 01 手册选型记录） |
 | Embedding | Transformers.js 或 llama-server /v1/embeddings | 抽象接口（Strategy）可切换 |
 | 契约 | `shared/contract.ts`（TS 类型 + Zod） | 前后端唯一事实源，编译期拦截漂移 |
 
@@ -51,7 +51,7 @@
 
 - [x] **M0 立项**：目录、文档体系（本 README + 01 + 02）
 - [x] **M1 骨架 + 前后端契约**：workspaces monorepo（backend/frontend/shared）、`shared/contract.ts`（Zod 契约）、`GET /health`、占位页；后端 6 + 前端 3 tests 全绿
-- [x] **M2 RAG 流水线**：解析(MD/TXT/PDF)→分块(heading/fixed)→embedding(Transformers/Mock)→LanceDB 入库→检索(topK+minScore 阈值)→LLM 回答(mock/OpenAI 兼容)；`POST /api/ingest` + `POST /api/query`；后端 47 tests 全绿、端到端实测通过
+- [x] **M2 RAG 流水线**：解析(MD/TXT/PDF)→分块(heading/fixed)→embedding(Transformers/Mock)→**TriviumDB 入库**→检索(topK+minScore 阈值)→LLM 回答(mock/OpenAI 兼容)；`POST /api/ingest` + `POST /api/query`；后端 48 tests 全绿、端到端实测通过（向量库 2026-08-03 由 LanceDB 换为 TriviumDB，业务零改动）
 - [ ] M3 问答体验（SSE 流式 + 引用标注 + 错误态）
 - [ ] M4 C++ 推理层（llama.cpp / llama-server 接入）
 - [ ] M5 验收 + 打磨 + 性能数字 + 面试手册回填

@@ -5,9 +5,9 @@ import path from "node:path";
  * infra/config.ts —— 基础设施配置（M2 唯一配置源，路径/模型集中在此，不散落）
  */
 
-/** 向量库数据目录：默认 backend/data/lancedb/，可用环境变量 RAG_LANCEDB_DIR 覆盖（测试用临时目录） */
-export const LANCEDB_DATA_DIR =
-  process.env.RAG_LANCEDB_DIR ?? path.resolve(process.cwd(), "data", "lancedb");
+/** 向量库数据目录：默认 backend/data/trivium/，可用环境变量 RAG_TRIVIUM_DIR 覆盖（测试用临时目录） */
+export const TRIVIUM_DATA_DIR =
+  process.env.RAG_TRIVIUM_DIR ?? path.resolve(process.cwd(), "data", "trivium");
 
 /** Transformers.js 模型缓存目录：默认放用户主目录，避免污染项目仓库 */
 export const TRANSFORMERS_CACHE_DIR =
