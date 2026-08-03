@@ -1,0 +1,30 @@
+:root {
+  font-family: system-ui, "Segoe UI", "Microsoft YaHei", sans-serif;
+  color-scheme: light dark;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  padding: 1.5rem;
+}
+
+.app {
+  max-width: 40rem;
+  margin: 0 auto;
+}
+
+.hint {
+  color: #888;
+}
+
+.chat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 32rem;
+}
+
+.chat-form input {
+  padding: 0.5rem;
+}

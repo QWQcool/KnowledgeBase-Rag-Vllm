@@ -1,0 +1,14 @@
+{
+  "name": "@rag/shared",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "RAG 知识库问答 · 共享契约（前后端唯一事实源）",
+  "main": "contract.ts",
+  "exports": {
+    ".": "./contract.ts"
+  },
+  "dependencies": {
+    "zod": "^3.24.1"
+  }
+}

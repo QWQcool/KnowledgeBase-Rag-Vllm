@@ -1,0 +1,11 @@
+{
+  "name": "rag-libraries",
+  "private": true,
+  "version": "0.1.0",
+  "description": "RAG 知识库问答 Web App · monorepo（workspaces: backend / frontend / shared）",
+  "workspaces": [
+    "backend",
+    "frontend",
+    "shared"
+  ]
+}
