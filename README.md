@@ -64,6 +64,31 @@
 4. 面试资产：每完成一个里程碑，把真实数字（检索命中率 / tok/s / 量化档位）回填进 `02-面试学习手册.md` 的速记卡。
 5. 依赖安装：根目录 `npm install`（workspaces 一次装齐三端），测试分别在 backend/ 与 frontend/ 下 `npm test`。
 
+## 新人上手（换机 / 他人 clone 本仓库）
+
+```powershell
+# 1) 安装依赖（node_modules 不入库，必须执行这一步）
+cd RAG_libraries
+npm install
+
+# 2) 跑测试（前后端各 1 次）
+cd backend;  npm test    # 预期 6 passed
+cd frontend; npm test    # 预期 3 passed
+
+# 3) 起后端（验证 /health）
+cd backend; $env:PORT = "3100"; npm run start
+# 另开终端：curl.exe http://localhost:3100/health   → {"status":"ok",...}
+
+# 4) 起前端
+cd frontend; npm run dev  # 浏览器开 http://localhost:5173
+```
+
+**关于 `node_modules`（为什么不入库、clone 后怎么还原）**：
+- `node_modules/` 已被 `.gitignore` 忽略，**不会**提交进 git——这是 Node 生态的**标准做法**，不是疏漏。
+- 依赖清单由 `package.json`（声明了哪些包）和 `package-lock.json`（锁定了精确版本）两份文件承载，二者入库；任何人 clone 后执行一次 `npm install` 即可**精确还原**同样的依赖树（含根 workspaces 三端依赖）。
+- 原理：依赖装在**项目本地**而非全局，是为了**版本隔离**——A 项目用 zod v3、B 项目用 zod v4 互不干扰；全局安装（`npm install -g`）反而会造成版本冲突，只在装 CLI 工具时用。
+- 进阶：如果觉得多个项目重复下载浪费磁盘/带宽，可换 **pnpm**（npm 的替代包管理器）：全局只存一份内容寻址的依赖仓库，各项目 `node_modules` 用硬链接指向它，既省空间又保持版本隔离。本仓库当前用 npm，未来如需可迁移。
+
 ## 约定
 
 - 本项目所有文档与代码统一放本目录 `RAG_libraries/`。
