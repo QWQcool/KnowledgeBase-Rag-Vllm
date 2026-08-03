@@ -2,7 +2,11 @@
 node_modules/
 dist/
 
-# 运行时数据（LanceDB 向量库落盘目录）
+# vitest 临时配置缓存（每次跑测试生成，无需入库）
+vitest.config.ts.timestamp-*.mjs
+vitest.config.*.timestamp-*.mjs
+
+# 运行时数据（TriviumDB 向量库落盘目录）
 data/
 .lancedb-*
 
