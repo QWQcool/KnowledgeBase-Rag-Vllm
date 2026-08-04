@@ -52,6 +52,7 @@
 - [x] **M0 立项**：目录、文档体系（本 README + 01 + 02）
 - [x] **M1 骨架 + 前后端契约**：workspaces monorepo（backend/frontend/shared）、`shared/contract.ts`（Zod 契约）、`GET /health`、占位页；后端 6 + 前端 3 tests 全绿
 - [x] **M2 RAG 流水线**：解析(MD/TXT/PDF)→分块(heading/fixed)→embedding(Transformers/Mock)→**TriviumDB 入库**→检索(topK+minScore 阈值)→LLM 回答(mock/OpenAI 兼容)；`POST /api/ingest` + `POST /api/query`；后端 48 tests 全绿、端到端实测通过（向量库 2026-08-03 由 LanceDB 换为 TriviumDB，业务零改动）
+- [x] **M2 补做 · MCP 接法**：`mcp-server/` 独立 workspace，`retrieve` 工具经 MCP 协议（官方 SDK + stdio）调用 backend `/api/retrieve` 真实检索；mcp-server 5 tests + 端到端实测通过；沉淀 skill `mcp-server-scaffold`
 - [ ] M3 问答体验（SSE 流式 + 引用标注 + 错误态）
 - [ ] M4 C++ 推理层（llama.cpp / llama-server 接入）
 - [ ] M5 验收 + 打磨 + 性能数字 + 面试手册回填

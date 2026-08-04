@@ -1,0 +1,22 @@
+{
+  "name": "rag-mcp-server",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "RAG 知识库检索 MCP server（把 retrieve 包成 MCP 工具，供任何 MCP 客户端调用）",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

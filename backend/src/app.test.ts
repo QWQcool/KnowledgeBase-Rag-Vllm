@@ -3,8 +3,15 @@ import {
   ChatRequest,
   ChatResponse,
   HealthStatus,
+  RetrieveRequest,
+  RetrieveResponse,
 } from "@rag/shared";
 import { createApp } from "./app";
+import { mountProductionHandlers, createProductionDeps } from "./bootstrap";
+import { MockEmbeddingProvider } from "./infra/embedding";
+import { TriviumDBStore } from "./infra/triviumdb-store";
+import { IngestService } from "./ingest/ingest-service";
+import { RetrieveService } from "./retrieval/retrieve-service";
 
 describe("GET /health", () => {
   it("返回 200 且 status=ok，符合 shared/contract 契约", async () => {
@@ -82,5 +89,63 @@ describe("共享契约校验（shared/contract.ts 为唯一事实源）", () => 
       knowledgeBaseId: "kb-1",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("POST /api/retrieve（MCP server 调用的纯检索端点）", () => {
+  it("合法 RetrieveRequest 返回 200 且 hits 符合 RetrieveResponse 契约", async () => {
+    // 用内存级 mock 依赖组装（不碰磁盘）：mock embedding + 临时目录 TriviumDB
+    const embedding = new MockEmbeddingProvider();
+    const store = new TriviumDBStore({ dataDir: "./.tmp-retrieve-test", dim: 384 });
+    const retrieveService = new RetrieveService(embedding, store);
+    const app = createApp({ retrieveService, llmProvider: { async generate(p) { return { answer: "mock" }; } } });
+    mountProductionHandlers(app, {
+      ingest: async () => new Response("{}", { status: 501 }),
+      listDocuments: async () => new Response("[]", { status: 200 }),
+      retrieve: async (c: any) => {
+        const raw = await c.req.json().catch(() => null);
+        const parsed = RetrieveRequest.safeParse(raw);
+        if (!parsed.success) return c.json({ error: "非法请求体" }, 422);
+        const result = await retrieveService.retrieve(parsed.data);
+        return c.json(RetrieveResponse.parse(result), 200);
+      },
+    });
+
+    const res = await app.request("/api/retrieve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        question: "什么是 RAG？",
+        knowledgeBaseId: "kb-1",
+        topK: 3,
+      }),
+    });
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { hits: unknown[] };
+    expect(Array.isArray(body.hits)).toBe(true);
+    expect(RetrieveResponse.safeParse(body).success).toBe(true);
+  });
+
+  it("非法 RetrieveRequest（缺 question）返回 422", async () => {
+    const app = createApp();
+    mountProductionHandlers(app, {
+      ingest: async () => new Response("{}", { status: 501 }),
+      listDocuments: async () => new Response("[]", { status: 200 }),
+      retrieve: async (c: any) => {
+        const raw = await c.req.json().catch(() => null);
+        const parsed = RetrieveRequest.safeParse(raw);
+        if (!parsed.success) return c.json({ error: "非法请求体" }, 422);
+        return c.json(RetrieveResponse.parse({ hits: [] }), 200);
+      },
+    });
+
+    const res = await app.request("/api/retrieve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ knowledgeBaseId: "kb-1" }),
+    });
+
+    expect(res.status).toBe(422);
   });
 });

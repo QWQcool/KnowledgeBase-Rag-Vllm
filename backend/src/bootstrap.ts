@@ -2,6 +2,8 @@ import {
   API_PREFIX,
   IngestRequest,
   IngestResponse,
+  RetrieveRequest,
+  RetrieveResponse,
   type Document,
 } from "@rag/shared";
 import { Hono } from "hono";
@@ -69,6 +71,16 @@ export function createProductionDeps(
       const docs: Document[] = [];
       return c.json(docs);
     },
+    async retrieve(c) {
+      // MCP server 等外部调用方：纯检索端点（不做 LLM 生成）
+      const raw = await c.req.json().catch(() => null);
+      const parsed = RetrieveRequest.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: "非法请求体", issues: parsed.error.issues }, 422);
+      }
+      const result: RetrieveResponse = await retrieveService.retrieve(parsed.data);
+      return c.json(RetrieveResponse.parse(result), 200);
+    },
   };
 
   return { deps: { retrieveService, llmProvider }, handlers };
@@ -78,4 +90,5 @@ export function createProductionDeps(
 export function mountProductionHandlers(app: Hono, handlers: AppHandlers) {
   app.post(`${API_PREFIX}/ingest`, handlers.ingest);
   app.get(`${API_PREFIX}/documents`, handlers.listDocuments);
+  app.post(`${API_PREFIX}/retrieve`, handlers.retrieve);
 }

@@ -38,6 +38,7 @@ export interface AppDeps {
 export interface AppHandlers {
   ingest: (c: any) => Promise<Response>;
   listDocuments: (c: any) => Promise<Response>;
+  retrieve: (c: any) => Promise<Response>;
 }
 
 /** 缺省检索实现：Retrieval Agent 交付前返回空命中（不造假检索结果） */
