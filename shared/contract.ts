@@ -124,6 +124,62 @@ export const ChatResponse = z.object({
 });
 export type ChatResponse = z.infer<typeof ChatResponse>;
 
+/* ===================== M3 流式问答（SSE） ===================== */
+
+/**
+ * 流式问答端点：POST /api/query/stream
+ * - 请求体同 ChatRequest（zod 校验），响应是 text/event-stream。
+ * - 后端按事件顺序推送：sources → token* → done（或中途 error）。
+ * - 每条 SSE 消息形如 `data: {JSON}\n\n`，JSON 即下方某个事件对象。
+ *
+ * 设计要点：
+ * - sources 事件先于 token 发出，让前端「先渲染引用列表，再看回答逐字出」，
+ *   而不是等全部生成完才看到来源（首 token 延迟与引用可见性解耦）。
+ * - 检索为空时仍推 sources(空数组) + 直接 done（带提示文案在 done.message 里），
+ *   不走 error——「没查到」是正常业务结果，不是错误。
+ * - LLM 中途异常 → 推一条 error 事件后关闭流（前端展示友好文案，不白屏）。
+ */
+export const STREAM_QUERY_PATH = `${API_PREFIX}/query/stream`;
+
+/** sources 事件：检索完成、LLM 生成前发出，前端据此渲染引用列表 */
+export const SourcesEvent = z.object({
+  type: z.literal("sources"),
+  sources: z.array(SourceRef),
+});
+export type SourcesEvent = z.infer<typeof SourcesEvent>;
+
+/** token 事件：LLM 逐字/逐词生成的增量片段 */
+export const TokenEvent = z.object({
+  type: z.literal("token"),
+  delta: z.string(),
+});
+export type TokenEvent = z.infer<typeof TokenEvent>;
+
+/** done 事件：流正常结束；message 可携带「未命中」等提示文案 */
+export const DoneEvent = z.object({
+  type: z.literal("done"),
+  elapsedMs: z.number().int().nonnegative(),
+  /** 检索为空等非错误场景的提示文案（可选） */
+  message: z.string().optional(),
+});
+export type DoneEvent = z.infer<typeof DoneEvent>;
+
+/** error 事件：LLM 异常等中途错误，前端展示友好文案 */
+export const ErrorEvent = z.object({
+  type: z.literal("error"),
+  message: z.string(),
+});
+export type ErrorEvent = z.infer<typeof ErrorEvent>;
+
+/** 流式事件联合（判别字段 type，前端按 type 分派渲染） */
+export const StreamingEvent = z.discriminatedUnion("type", [
+  SourcesEvent,
+  TokenEvent,
+  DoneEvent,
+  ErrorEvent,
+]);
+export type StreamingEvent = z.infer<typeof StreamingEvent>;
+
 /* ===================== M2 流水线：分块 / 摄入 / 检索 ===================== */
 
 /** 文档分块：一个 chunk = 一个可检索的最小单元（M2 起核心概念） */

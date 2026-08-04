@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
+import { streamSSE } from "hono/streaming";
 import {
   API_PREFIX,
   ChatRequest,
@@ -7,6 +8,7 @@ import {
   Document,
   HealthStatus,
   KnowledgeBase,
+  STREAM_QUERY_PATH,
   ok,
 } from "@rag/shared";
 import type { LLMProvider } from "./infra/types";
@@ -97,6 +99,24 @@ export function createApp(deps?: Partial<AppDeps>) {
     const response = await queryService.query(parsed.data);
     // 响应再经契约校验一遍：ChatResponse 是唯一事实源
     return c.json(ChatResponse.parse(response));
+  });
+
+  // POST /api/query/stream —— 流式问答（M3 SSE）
+  app.post(STREAM_QUERY_PATH, async (c) => {
+    const raw = await c.req.json().catch(() => null);
+    const parsed = ChatRequest.safeParse(raw);
+    if (!parsed.success) {
+      return c.json(
+        { error: "非法请求体", issues: parsed.error.issues },
+        422,
+      );
+    }
+
+    return streamSSE(c, async (stream) => {
+      for await (const event of queryService.streamQuery(parsed.data)) {
+        await stream.writeSSE({ data: JSON.stringify(event) });
+      }
+    });
   });
 
   return app;

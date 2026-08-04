@@ -41,10 +41,25 @@ export interface VectorStore {
 
 /** LLM 生成接口（可替换实现：OpenAI 兼容 HTTP / llama-server / Mock） */
 export interface LLMProvider {
-  /** 根据系统提示 + 检索上下文 + 用户问题生成回答 */
+  /**
+   * 非流式生成（M2 用，POST /api/query）。
+   * 等模型整段回答生成完再返回。
+   */
   generate(params: {
     systemPrompt: string;
     contextChunks: { content: string; source: string }[];
     question: string;
   }): Promise<{ answer: string }>;
+
+  /**
+   * 流式生成（M3 用，POST /api/query/stream）。
+   * 返回 async generator，逐段 yield { delta }，前端 SSE 逐字渲染。
+   * 实现需保证：生成完毕后 generator 自然结束（不 yield 结束标记，
+   * 结束由编排层发 done 事件）；抛异常时编排层捕获并发 error 事件。
+   */
+  stream(params: {
+    systemPrompt: string;
+    contextChunks: { content: string; source: string }[];
+    question: string;
+  }): AsyncGenerator<{ delta: string }, void, unknown>;
 }

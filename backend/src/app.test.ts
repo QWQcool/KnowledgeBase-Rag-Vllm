@@ -98,7 +98,7 @@ describe("POST /api/retrieve（MCP server 调用的纯检索端点）", () => {
     const embedding = new MockEmbeddingProvider();
     const store = new TriviumDBStore({ dataDir: "./.tmp-retrieve-test", dim: 384 });
     const retrieveService = new RetrieveService(embedding, store);
-    const app = createApp({ retrieveService, llmProvider: { async generate(p) { return { answer: "mock" }; } } });
+    const app = createApp({ retrieveService, llmProvider: { async generate(p) { return { answer: "mock" }; }, async *stream(p) { yield { delta: "mock" }; } } });
     mountProductionHandlers(app, {
       ingest: async () => new Response("{}", { status: 501 }),
       listDocuments: async () => new Response("[]", { status: 200 }),

@@ -3,6 +3,7 @@ import {
   type ChatResponse,
   type RetrieveRequest,
   type RetrieveResponse,
+  type StreamingEvent,
 } from "@rag/shared";
 import type { LLMProvider } from "../infra/types";
 
@@ -27,6 +28,7 @@ export interface QueryServiceDeps {
 
 export interface QueryService {
   query(req: ChatRequest): Promise<ChatResponse>;
+  streamQuery(req: ChatRequest): AsyncGenerator<StreamingEvent, void, unknown>;
 }
 
 /** 每片检索片段允许带进 systemPrompt 的最长内容 */
@@ -95,6 +97,74 @@ export function createQueryService(deps: QueryServiceDeps): QueryService {
         sources,
         elapsedMs: Date.now() - startedAt,
       };
+    },
+
+    /**
+     * 流式问答：sources → token* → done（或 error）。
+     * - 检索为空：仍发 sources([]) + done(message)，不发 error。
+     * - LLM 异常：发 sources 后捕获异常发 error 事件，return。
+     */
+    async *streamQuery(req: ChatRequest): AsyncGenerator<StreamingEvent, void, unknown> {
+      const startedAt = Date.now();
+
+      const minScore =
+        process.env.RAG_MIN_SCORE !== undefined
+          ? Number(process.env.RAG_MIN_SCORE)
+          : DEFAULT_MIN_SCORE;
+
+      const { hits } = await retrieveService.retrieve({
+        question: req.question,
+        knowledgeBaseId: req.knowledgeBaseId,
+        topK: 5,
+        minScore,
+      });
+
+      const sources = hits.map((hit) => ({
+        documentId: hit.chunk.documentId,
+        documentName: hit.chunk.source?.title ?? `文档 ${hit.chunk.documentId}`,
+        chunkIndex: hit.chunk.index,
+        snippet: hit.chunk.content.slice(0, SNIPPET_MAX_LEN),
+        score: Math.min(1, Math.max(0, hit.score)),
+      }));
+
+      // 先推 sources，让前端尽早渲染引用列表
+      yield { type: "sources", sources };
+
+      // 检索为空：正常结束，不发 token / error
+      if (hits.length === 0) {
+        yield {
+          type: "done",
+          elapsedMs: Date.now() - startedAt,
+          message: "未找到相关内容，请换一种问法，或补充更多资料后再试。",
+        };
+        return;
+      }
+
+      const systemPrompt =
+        "你是一个基于知识库回答问题的助手。" +
+        "请只依据用户给出的检索片段作答，不要编造片段之外的内容。" +
+        "回答时尽量引用片段原文，并在末尾按需提及出处。";
+
+      try {
+        for await (const { delta } of llmProvider.stream({
+          systemPrompt,
+          contextChunks: hits.map((hit) => ({
+            content: hit.chunk.content,
+            source: hit.chunk.source?.title ?? hit.chunk.documentId,
+          })),
+          question: req.question,
+        })) {
+          yield { type: "token", delta };
+        }
+        yield { type: "done", elapsedMs: Date.now() - startedAt };
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : String(err) || "未知错误";
+        yield {
+          type: "error",
+          message: `生成失败：${message}`,
+        };
+      }
     },
   };
 }

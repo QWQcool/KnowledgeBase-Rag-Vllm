@@ -33,6 +33,21 @@ export class MockLLMProvider implements LLMProvider {
         `（片段来源：${best.source}）`,
     };
   }
+
+  /**
+   * 流式生成：复用 generate 的拼装逻辑拿到完整 answer，再按字符切片 yield，
+   * 模拟逐字流。确定性、无外部依赖，便于测试。
+   */
+  async *stream(params: {
+    systemPrompt: string;
+    contextChunks: { content: string; source: string }[];
+    question: string;
+  }): AsyncGenerator<{ delta: string }, void, unknown> {
+    const { answer } = await this.generate(params);
+    for (const ch of answer) {
+      yield { delta: ch };
+    }
+  }
 }
 
 export interface OpenAICompatibleLLMConfig {
@@ -68,20 +83,7 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
       throw new Error("未配置模型名：请设置 OPENAI_MODEL 环境变量");
     }
 
-    const contextText =
-      contextChunks.length === 0
-        ? "（未检索到相关资料）"
-        : contextChunks
-            .map((c, i) => `[片段${i + 1}] ${c.content}`)
-            .join("\n\n");
-
-    const messages = [
-      { role: "system", content: systemPrompt },
-      {
-        role: "user",
-        content: `以下是检索到的参考资料：\n${contextText}\n\n用户问题：${question}`,
-      },
-    ];
+    const messages = this.buildMessages(params);
 
     const url = `${this.baseUrl}/v1/chat/completions`;
     const headers: Record<string, string> = { "content-type": "application/json" };
@@ -106,6 +108,96 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
       throw new Error("LLM API 返回格式异常：缺少 choices[0].message.content");
     }
     return { answer };
+  }
+
+  /**
+   * 流式生成：POST /v1/chat/completions with stream:true，
+   * 用 reader 逐行读 SSE `data:` 行，解析 choices[0].delta.content 逐段 yield。
+   * 遇到 `data: [DONE]` 结束。
+   */
+  async *stream(params: {
+    systemPrompt: string;
+    contextChunks: { content: string; source: string }[];
+    question: string;
+  }): AsyncGenerator<{ delta: string }, void, unknown> {
+    if (!this.model) {
+      throw new Error("未配置模型名：请设置 OPENAI_MODEL 环境变量");
+    }
+
+    const messages = this.buildMessages(params);
+
+    const url = `${this.baseUrl}/v1/chat/completions`;
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (this.apiKey) {
+      headers.authorization = `Bearer ${this.apiKey}`;
+    }
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model: this.model,
+        messages,
+        temperature: 0.2,
+        stream: true,
+      }),
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`LLM API 流式请求失败 ${res.status}: ${await res.text()}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+
+      // 按行切分处理 SSE
+      let nl: number;
+      while ((nl = buf.indexOf("\n")) !== -1) {
+        const line = buf.slice(0, nl).replace(/\r$/, "").trim();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice("data:".length).trim();
+        if (payload === "[DONE]") return;
+        if (payload === "") continue;
+        try {
+          const parsed = JSON.parse(payload) as {
+            choices?: { delta?: { content?: string } }[];
+          };
+          const delta = parsed.choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta.length > 0) {
+            yield { delta };
+          }
+        } catch {
+          // 心跳行等非 JSON 跳过
+        }
+      }
+    }
+  }
+
+  /** 复用：把 systemPrompt + contextChunks + question 组装成 OpenAI messages 数组 */
+  private buildMessages(params: {
+    systemPrompt: string;
+    contextChunks: { content: string; source: string }[];
+    question: string;
+  }): { role: string; content: string }[] {
+    const { systemPrompt, contextChunks, question } = params;
+    const contextText =
+      contextChunks.length === 0
+        ? "（未检索到相关资料）"
+        : contextChunks
+            .map((c, i) => `[片段${i + 1}] ${c.content}`)
+            .join("\n\n");
+    return [
+      { role: "system", content: systemPrompt },
+      {
+        role: "user",
+        content: `以下是检索到的参考资料：\n${contextText}\n\n用户问题：${question}`,
+      },
+    ];
   }
 }
 

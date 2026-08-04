@@ -53,13 +53,13 @@
 - [x] **M1 骨架 + 前后端契约**：workspaces monorepo（backend/frontend/shared）、`shared/contract.ts`（Zod 契约）、`GET /health`、占位页；后端 6 + 前端 3 tests 全绿
 - [x] **M2 RAG 流水线**：解析(MD/TXT/PDF)→分块(heading/fixed)→embedding(Transformers/Mock)→**TriviumDB 入库**→检索(topK+minScore 阈值)→LLM 回答(mock/OpenAI 兼容)；`POST /api/ingest` + `POST /api/query`；后端 48 tests 全绿、端到端实测通过（向量库 2026-08-03 由 LanceDB 换为 TriviumDB，业务零改动）
 - [x] **M2 补做 · MCP 接法**：`mcp-server/` 独立 workspace，`retrieve` 工具经 MCP 协议（官方 SDK + stdio）调用 backend `/api/retrieve` 真实检索；mcp-server 5 tests + 端到端实测通过；沉淀 skill `mcp-server-scaffold`
-- [ ] M3 问答体验（SSE 流式 + 引用标注 + 错误态）
+- [x] **M3 问答体验**：`POST /api/query/stream` SSE 流式（sources→token*→done/error）；前端 `ReadableStream` reader + `TextDecoder` 逐字渲染 + 引用列表可展开 + 错误态不白屏；后端 56 + 前端 6 tests 全绿，端到端实测通过
 - [ ] M4 C++ 推理层（llama.cpp / llama-server 接入）
 - [ ] M5 验收 + 打磨 + 性能数字 + 面试手册回填
 
-## 快速开始（当前处于 M2 完成 → M3）
+## 快速开始（当前处于 M3 完成 → M4）
 
-1. 打开 `01-项目规划与执行手册.md`，从 **M3 问答体验** 开始。
+1. 打开 `01-项目规划与执行手册.md`，从 **M4 C++ 推理层** 开始。
 2. 每个里程碑：**先读 AC → 照抄「派单提示词」派 Agent → TDD 门禁（`npm test` 全绿）→ 勾掉 AC → 更新本 README 进度**。
 3. 环境要求：Node 22+（前端/后端）、Git；**本地 LLM 推理层到 M4 才需要**（llama.cpp，Windows 本机运行）。
 4. 面试资产：每完成一个里程碑，把真实数字（检索命中率 / tok/s / 量化档位）回填进 `02-面试学习手册.md` 的速记卡。
