@@ -8,55 +8,84 @@ try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 $ErrorActionPreference = "Stop"
 $base = "http://localhost:3105"
 $kb   = "kb-accept"
-$mdPath = Join-Path $PSScriptRoot "rag-guide.md"
+
+# 测试文档内容（here-string，与 rag-guide.md 一致；避免文件编码/读取差异）
+$docContent = @"
+# RAG 是什么
+
+RAG 是检索增强生成（Retrieval-Augmented Generation），它先从知识库检索相关片段，再让大模型基于片段生成回答。
+
+# 为什么用向量检索
+
+文档被切成块后转成向量，用户的问题也转成向量，用向量相似度找到语义上最相关的块。
+
+# chunk 策略
+
+按标题分块保留语义结构；固定长度分块适合无结构的纯文本，可通过 chunkSize 配置粒度。
+
+# 检索质量
+
+检索时通过 minScore 阈值过滤低相关命中，避免无关问题也返回内容，防止模型编造答案。
+"@
+
+function Invoke-JsonPost($uri, $obj) {
+  $json = $obj | ConvertTo-Json -Compress
+  try {
+    $resp = Invoke-RestMethod -Method Post -Uri $uri -ContentType "application/json" -Body $json
+    return @{ ok = $true; data = $resp }
+  } catch {
+    # 尝试解析响应体里的 issues（422 时后端返回 { error, issues }）
+    $body = ""
+    try {
+      $reader = New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())
+      $body = $reader.ReadToEnd()
+    } catch {}
+    return @{ ok = $false; http = [int]$_.Exception.Response.StatusCode; body = $body }
+  }
+}
 
 Write-Host ""
 Write-Host "===== 1) POST /api/ingest (上传 MD, heading 分块) ====="
-try {
-  $content = Get-Content -Raw -Encoding UTF8 $mdPath
-  $body = @{
-    filename        = "rag-guide.md"
-    chunkStrategy   = "heading"
-    knowledgeBaseId = $kb
-    content         = $content
-  } | ConvertTo-Json
-  $r = Invoke-RestMethod -Method Post -Uri "$base/api/ingest" -ContentType "application/json" -Body $body
-  Write-Host ("[PASS] HTTP 201, chunkCount = " + $r.chunkCount) -ForegroundColor Green
-} catch {
-  Write-Host ("[FAIL] ingest 失败: " + $_.Exception.Message) -ForegroundColor Red
+$ingestResult = Invoke-JsonPost "$base/api/ingest" @{
+  filename        = "rag-guide.md"
+  chunkStrategy   = "heading"
+  knowledgeBaseId = $kb
+  content         = $docContent
+}
+if ($ingestResult.ok) {
+  Write-Host ("[PASS] HTTP 201, chunkCount = " + $ingestResult.data.chunkCount) -ForegroundColor Green
+} else {
+  Write-Host ("[FAIL] ingest HTTP " + $ingestResult.http) -ForegroundColor Red
+  Write-Host ("  响应体: " + $ingestResult.body) -ForegroundColor Yellow
 }
 
 Write-Host ""
 Write-Host "===== 2) POST /api/query (相关问题, 应命中) ====="
-try {
-  $q1 = @{ question = "RAG 是怎么工作的？"; knowledgeBaseId = $kb } | ConvertTo-Json
-  $r1 = Invoke-RestMethod -Method Post -Uri "$base/api/query" -ContentType "application/json" -Body $q1
-  $hasSnippet = ($r1.answer -match "检索增强生成")
-  Write-Host ("[PASS] sources = " + $r1.sources.Count + " | answer 含原文: " + $hasSnippet) -ForegroundColor Green
-} catch {
-  Write-Host ("[FAIL] 相关问题失败: " + $_.Exception.Message) -ForegroundColor Red
+$q1Result = Invoke-JsonPost "$base/api/query" @{ question = "RAG 是怎么工作的？"; knowledgeBaseId = $kb }
+if ($q1Result.ok) {
+  $hasSnippet = ($q1Result.data.answer -match "检索增强生成")
+  Write-Host ("[PASS] sources = " + $q1Result.data.sources.Count + " | answer 含原文: " + $hasSnippet) -ForegroundColor Green
+} else {
+  Write-Host ("[FAIL] query HTTP " + $q1Result.http + " | " + $q1Result.body) -ForegroundColor Red
 }
 
 Write-Host ""
 Write-Host "===== 3) POST /api/query (无关问题, 应 0 sources) ====="
-try {
-  $q2 = @{ question = "今天天气如何？"; knowledgeBaseId = $kb } | ConvertTo-Json
-  $r2 = Invoke-RestMethod -Method Post -Uri "$base/api/query" -ContentType "application/json" -Body $q2
-  $notFound = ($r2.answer -match "未找到")
-  Write-Host ("[PASS] sources = " + $r2.sources.Count + " | 提示未找到: " + $notFound) -ForegroundColor Green
-} catch {
-  Write-Host ("[FAIL] 无关问题失败: " + $_.Exception.Message) -ForegroundColor Red
+$q2Result = Invoke-JsonPost "$base/api/query" @{ question = "今天天气如何？"; knowledgeBaseId = $kb }
+if ($q2Result.ok) {
+  $notFound = ($q2Result.data.answer -match "未找到")
+  Write-Host ("[PASS] sources = " + $q2Result.data.sources.Count + " | 提示未找到: " + $notFound) -ForegroundColor Green
+} else {
+  Write-Host ("[FAIL] query HTTP " + $q2Result.http + " | " + $q2Result.body) -ForegroundColor Red
 }
 
 Write-Host ""
 Write-Host "===== 4) POST /api/query (非法请求, 应 422) ====="
-try {
-  $bad = @{ question = "" } | ConvertTo-Json
-  Invoke-RestMethod -Method Post -Uri "$base/api/query" -ContentType "application/json" -Body $bad
+$badResult = Invoke-JsonPost "$base/api/query" @{ question = "" }
+if ($badResult.ok) {
   Write-Host "[FAIL] 非法请求竟然成功" -ForegroundColor Red
-} catch {
-  $status = [int]$_.Exception.Response.StatusCode
-  Write-Host ("[PASS] 非法请求被拦, HTTP " + $status) -ForegroundColor Green
+} else {
+  Write-Host ("[PASS] 非法请求被拦, HTTP " + $badResult.http) -ForegroundColor Green
 }
 
 Write-Host ""
