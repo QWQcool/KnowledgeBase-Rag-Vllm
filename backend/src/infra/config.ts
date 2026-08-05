@@ -14,11 +14,21 @@ export const TRANSFORMERS_CACHE_DIR =
   process.env.RAG_HF_CACHE_DIR ??
   path.join(os.homedir(), ".cache", "huggingface", "transformers");
 
-/** 向量维度：与 all-MiniLM-L6-v2 及 Mock 对齐 */
-export const EMBEDDING_DIM = 384;
+/**
+ * 向量维度：默认 384（与 multilingual-e5-small 及 Mock 对齐）。
+ * 切到 llama-server /v1/embeddings（如 bge-m3=1024、text-embedding-3-small=1536）
+ * 时必须用环境变量 RAG_EMBEDDING_DIM 覆盖，且与入库时一致——
+ * 维度变 = 已入库向量作废，需清 data/trivium/ 重建索引。
+ */
+export const EMBEDDING_DIM = Number(process.env.RAG_EMBEDDING_DIM ?? 384);
 
-/** Transformers.js 使用的 embedding 模型（HF hub 名称，首次运行自动下载） */
-export const EMBEDDING_MODEL = "Xenova/all-MiniLM-L6-v2";
+/**
+ * Transformers.js 使用的 embedding 模型（HF hub 名称，首次运行自动下载）。
+ * M4 起改用 multilingual-e5-small（多语言含中文，384 维，有 ONNX 文件）——
+ * all-MiniLM-L6-v2 是英文模型，对中文问句标点过于敏感。
+ * 注：Xenova/bge-small-zh-v1.5 仓库缺 ONNX 文件无法用于 Transformers.js。
+ */
+export const EMBEDDING_MODEL = "Xenova/multilingual-e5-small";
 
 /** 在线模型不可用时的降级提示（配合 try/catch 抛出） */
 export const EMBEDDING_FALLBACK_HINT =

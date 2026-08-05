@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   MockEmbeddingProvider,
+  OpenAICompatibleEmbeddingProvider,
   createEmbeddingProvider,
   type EmbeddingProviderType,
 } from "./embedding";
+import { EMBEDDING_DIM } from "./config";
 import type { EmbeddingProvider } from "./types";
 
 describe("MockEmbeddingProvider", () => {
@@ -22,9 +24,9 @@ describe("MockEmbeddingProvider", () => {
     expect(v1).not.toEqual(v2);
   });
 
-  it("向量维度固定为 384（与 all-MiniLM-L6-v2 对齐）", async () => {
+  it("向量维度与 EMBEDDING_DIM 对齐（M4 起默认 384 = multilingual-e5-small）", async () => {
     const [v] = await provider.embed(["测试"]);
-    expect(v).toHaveLength(384);
+    expect(v).toHaveLength(EMBEDDING_DIM);
     expect(v.every((x) => Number.isFinite(x))).toBe(true);
   });
 
@@ -48,9 +50,93 @@ describe("createEmbeddingProvider 工厂（Strategy 模式）", () => {
     expect(p).toBeDefined();
   });
 
+  it('type="openai" 返回 OpenAICompatibleEmbeddingProvider 实例', () => {
+    const p = createEmbeddingProvider("openai");
+    expect(p).toBeInstanceOf(OpenAICompatibleEmbeddingProvider);
+  });
+
   it("非法 type 抛明确错误", () => {
     expect(() =>
       createEmbeddingProvider("unknown" as EmbeddingProviderType),
     ).toThrow();
+  });
+});
+
+describe("OpenAICompatibleEmbeddingProvider（llama-server /v1/embeddings）", () => {
+  it("按 OpenAI 兼容协议 POST /v1/embeddings 并解析向量", async () => {
+    const fetchMock = vi.fn(
+      async (_input: string | URL, _init?: RequestInit) =>
+        new Response(
+          JSON.stringify({
+            data: [{ embedding: [0.1, 0.2, 0.3] }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const provider = new OpenAICompatibleEmbeddingProvider({
+      baseUrl: "http://localhost:8080/v1",
+      model: "bge-m3",
+      apiKey: "sk-test",
+      dim: 3,
+    });
+
+    const [v] = await provider.embed(["测试文本"]);
+
+    expect(v).toEqual([0.1, 0.2, 0.3]);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("http://localhost:8080/v1/embeddings");
+    const body = JSON.parse(String(init?.body));
+    expect(body.model).toBe("bge-m3");
+    expect(body.input).toEqual(["测试文本"]);
+    expect(init?.headers).toMatchObject({ authorization: "Bearer sk-test" });
+
+    vi.unstubAllGlobals();
+  });
+
+  it("维度不匹配时抛出明确错误（换模型没改 RAG_EMBEDDING_DIM）", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ data: [{ embedding: [0.1, 0.2, 0.3, 0.4] }] }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+
+    const provider = new OpenAICompatibleEmbeddingProvider({
+      baseUrl: "http://localhost:8080/v1",
+      model: "bge-m3",
+      dim: 384, // 模型返回 4 维，配置期望 384 → 应报错
+    });
+
+    await expect(provider.embed(["x"])).rejects.toThrow(/维度不匹配/);
+
+    vi.unstubAllGlobals();
+  });
+
+  it("未配置模型名时抛出明确错误", async () => {
+    const provider = new OpenAICompatibleEmbeddingProvider({
+      baseUrl: "http://localhost:8080/v1",
+      model: "",
+      apiKey: "",
+    });
+    await expect(provider.embed(["x"])).rejects.toThrow(/未配置 embedding 模型名/);
+  });
+
+  it("空数组输入直接返回空（不请求）", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const provider = new OpenAICompatibleEmbeddingProvider({
+      baseUrl: "http://localhost:8080/v1",
+      model: "bge-m3",
+      dim: 384,
+    });
+    expect(await provider.embed([])).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
   });
 });

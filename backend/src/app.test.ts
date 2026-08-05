@@ -9,6 +9,7 @@ import {
 import { createApp } from "./app";
 import { mountProductionHandlers, createProductionDeps } from "./bootstrap";
 import { MockEmbeddingProvider } from "./infra/embedding";
+import { EMBEDDING_DIM } from "./infra/config";
 import { TriviumDBStore } from "./infra/triviumdb-store";
 import { IngestService } from "./ingest/ingest-service";
 import { RetrieveService } from "./retrieval/retrieve-service";
@@ -96,7 +97,7 @@ describe("POST /api/retrieve（MCP server 调用的纯检索端点）", () => {
   it("合法 RetrieveRequest 返回 200 且 hits 符合 RetrieveResponse 契约", async () => {
     // 用内存级 mock 依赖组装（不碰磁盘）：mock embedding + 临时目录 TriviumDB
     const embedding = new MockEmbeddingProvider();
-    const store = new TriviumDBStore({ dataDir: "./.tmp-retrieve-test", dim: 384 });
+    const store = new TriviumDBStore({ dataDir: "./.tmp-retrieve-test", dim: EMBEDDING_DIM });
     const retrieveService = new RetrieveService(embedding, store);
     const app = createApp({ retrieveService, llmProvider: { async generate(p) { return { answer: "mock" }; }, async *stream(p) { yield { delta: "mock" }; } } });
     mountProductionHandlers(app, {

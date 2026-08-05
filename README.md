@@ -54,17 +54,17 @@
 - [x] **M2 RAG 流水线**：解析(MD/TXT/PDF)→分块(heading/fixed)→embedding(Transformers/Mock)→**TriviumDB 入库**→检索(topK+minScore 阈值)→LLM 回答(mock/OpenAI 兼容)；`POST /api/ingest` + `POST /api/query`；后端 48 tests 全绿、端到端实测通过（向量库 2026-08-03 由 LanceDB 换为 TriviumDB，业务零改动）
 - [x] **M2 补做 · MCP 接法**：`mcp-server/` 独立 workspace，`retrieve` 工具经 MCP 协议（官方 SDK + stdio）调用 backend `/api/retrieve` 真实检索；mcp-server 5 tests + 端到端实测通过；沉淀 skill `mcp-server-scaffold`
 - [x] **M3 问答体验**：`POST /api/query/stream` SSE 流式（sources→token*→done/error）；前端 `ReadableStream` reader + `TextDecoder` 逐字渲染 + 引用列表可展开 + 错误态不白屏；后端 56 + 前端 6 tests 全绿，端到端实测通过
-- [ ] M4 C++ 推理层（llama.cpp / llama-server 接入）
+- [x] **M4 C++ 推理层**：新增 `OpenAICompatibleEmbeddingProvider`（走 `/v1/embeddings`，含维度校验），`EMBEDDING_DIM` 改可环境变量覆盖；LLM 侧零代码改动（`OpenAICompatibleLLMProvider` 早已预留 llama-server 接入）；后端 61 tests 全绿。本机部署 llama-server（qwen2.5-7b-q4）+ 指向后端 + 性能基准脚本见下方「M4 本机推理层部署」
 - [ ] M5 验收 + 打磨 + 性能数字 + 面试手册回填
 
-## 快速开始（当前处于 M3 完成 → M4）
+## 快速开始（当前处于 M4 完成 → M5）
 
-1. 打开 `01-项目规划与执行手册.md`，从 **M4 C++ 推理层** 开始。
+1. 打开 `01-项目规划与执行手册.md`，从 **M5 验收打磨** 开始。
 2. 每个里程碑：**先读 AC → 照抄「派单提示词」派 Agent → TDD 门禁（`npm test` 全绿）→ 勾掉 AC → 更新本 README 进度**。
-3. 环境要求：Node 22+（前端/后端）、Git；**本地 LLM 推理层到 M4 才需要**（llama.cpp，Windows 本机运行）。
+3. 环境要求：Node 22+（前端/后端）、Git；**本地 LLM 推理层（M4）需 llama.cpp + GGUF 模型**，见下方「M4 本机推理层部署」。
 4. 面试资产：每完成一个里程碑，把真实数字（检索命中率 / tok/s / 量化档位）回填进 `02-面试学习手册.md` 的速记卡。
 5. 依赖安装：根目录 `npm install`（workspaces 一次装齐三端），测试分别在 backend/ 与 frontend/ 下 `npm test`。
-6. 后端运行：`cd backend && RAG_EMBEDDING=transformers LLM_PROVIDER=mock PORT=3000 npm run start`；环境变量说明见 skill `rag-ingest`。
+6. 后端运行（mock 模式，无需推理层）：`cd backend && $env:RAG_EMBEDDING="transformers"; $env:LLM_PROVIDER="mock"; $env:PORT="3000"; npm run start`。
 
 ## 新人上手（换机 / 他人 clone 本仓库）
 
@@ -90,6 +90,80 @@ cd frontend; npm run dev  # 浏览器开 http://localhost:5173
 - 依赖清单由 `package.json`（声明了哪些包）和 `package-lock.json`（锁定了精确版本）两份文件承载，二者入库；任何人 clone 后执行一次 `npm install` 即可**精确还原**同样的依赖树（含根 workspaces 三端依赖）。
 - 原理：依赖装在**项目本地**而非全局，是为了**版本隔离**——A 项目用 zod v3、B 项目用 zod v4 互不干扰；全局安装（`npm install -g`）反而会造成版本冲突，只在装 CLI 工具时用。
 - 进阶：如果觉得多个项目重复下载浪费磁盘/带宽，可换 **pnpm**（npm 的替代包管理器）：全局只存一份内容寻址的依赖仓库，各项目 `node_modules` 用硬链接指向它，既省空间又保持版本隔离。本仓库当前用 npm，未来如需可迁移。
+
+## M4 本机推理层部署（llama.cpp / llama-server）
+
+M4 的核心：把后端的 LLM 生成从 Mock 切到本机真大模型，**TS 后端零代码改动**（Adapter 模式回报：`OpenAICompatibleLLMProvider` 早已预留 llama-server 接入，只设环境变量）。Embedding 侧也补了 `OpenAICompatibleEmbeddingProvider` 满足「可切换」AC，但默认仍用 Transformers.js 不破坏现有索引。
+
+### 1. 选 GGUF 模型（按硬件档位）
+
+| 硬件 | 推荐模型 | 大小 | 速度参考 | 说明 |
+|---|---|---|---|---|
+| **N 卡 ≥8GB 显存**（本项目档） | `qwen2.5-7b-instruct-q4_k_m` | ~4.7GB | 几十 tok/s | 中文好、量化均衡，主力推荐 |
+| N 卡 4–6GB 显存 | `qwen2.5-3b-instruct-q4_k_m` | ~2GB | 二十+ tok/s | 显存不够 7b 时的退档 |
+| 核显/无独显，≥16GB 内存 | `qwen2.5-1.5b-instruct-q4_k_m` | ~1GB | 个位数 tok/s | 纯 CPU 推理，能跑但慢 |
+
+量化档位（Q4_K_M 是性价比甜点；Q5/Q6 更准但更慢、Q2/Q3 失真多）。模型从 [HuggingFace](https://huggingface.co/Qwen) 或 [ModelScope](https://modelscope.cn) 下，文件 `.gguf` 放本机任意目录（**不入 git**，已 gitignore）。
+
+### 2. 装 llama.cpp（用预编译包，不自己编译）
+
+到 https://github.com/ggml-org/llama.cpp/releases 下最新 `llama-<版本>-bin-win-cuda-cu12-x64.zip`（CUDA 版，N 卡用；核显下 `bin-win-avx2-x64.zip`）。解压到如 `C:\llama.cpp\`，里面有 `llama-server.exe`。
+
+### 3. 起 llama-server（N 卡 + 7b 档）
+
+```powershell
+# PowerShell 5.1：环境变量与参数分行，避免分号吞引号坑
+cd C:\llama.cpp
+$env:CUDA_VISIBLE_DEVICES = "0"
+.\llama-server.exe `
+  --model "C:\models\qwen2.5-7b-instruct-q4_k_m.gguf" `
+  --host 0.0.0.0 --port 8080 `
+  --n-gpu-layers 99 `
+  --ctx-size 4096 `
+  --embedding
+```
+
+- `--n-gpu-layers 99`：尽量把层卸载到 GPU（N 卡加速关键；99 表示全卸）。
+- `--ctx-size 4096`：上下文窗口，RAG 检索片段 + 提问通常够。
+- `--embedding`：同时开 `/v1/embeddings` 端点（若要把 embedding 也切到 llama-server 才需要；默认用 Transformers.js 可不加）。
+- 起来后访问 http://localhost:8080 看到 Web UI 即成功；`/v1/chat/completions` 与 `/v1/embeddings` 自动可用。
+
+### 4. 后端指向 llama-server
+
+```powershell
+cd RAG_libraries\backend
+# LLM 切到 llama-server（Adapter：只改环境变量，不改代码）
+$env:LLM_PROVIDER = "openai"
+$env:OPENAI_BASE_URL = "http://localhost:8080/v1"
+$env:OPENAI_MODEL = "qwen2.5-7b-instruct"   # llama-server 用模型文件名/别名
+$env:OPENAI_API_KEY = "not-needed"           # llama-server 不校验，但 Provider 要非空串
+# Embedding 保持 Transformers.js（已验证、不重索引）
+$env:RAG_EMBEDDING = "transformers"
+$env:PORT = "3000"
+npm run start
+```
+
+> **Embedding 切 llama-server（可选）**：`$env:RAG_EMBEDDING="openai"; $env:OPENAI_EMBEDDING_MODEL="bge-m3"; $env:RAG_EMBEDDING_DIM="1024"`。⚠️ **维度变 = 已入库向量作废**：必须先 `Remove-Item -Recurse backend\data\trivium\*` 再重新 ingest。代码里有维度校验第一时间报错。
+
+### 5. 端到端验证 + 性能基准
+
+```powershell
+# 起 frontend（另一终端）
+cd RAG_libraries\frontend; npm run dev   # http://localhost:5173 提问，看流式真生成
+```
+
+跑性能基准脚本（首 token 延迟 / tok/s / 内存占用）：
+```powershell
+cd RAG_libraries\scripts
+node bench-llama.mjs   # 输出 bench-result.md；用 node 是为精准计时 SSE 流式
+```
+
+### 设计要点（面试）
+
+- **为什么 C++？** llama.cpp 是本地大模型推理事实标准，量化 + SIMD 优化，性能远超 Python GIL 受限的推理。
+- **GGUF 量化是什么？** 把 float16 权重压成 4-bit（Q4_K_M 等），显存/内存降 4 倍，精度损失可控。
+- **TS↔C++ 边界为什么是 HTTP？** llama-server 暴露 OpenAI 兼容协议——TS 这边只是个 HTTP 客户端，换模型/换后端不换代码（Adapter 模式）；C++ 进程崩了不影响 TS，进程隔离。
+- **维度陷阱**：embedding 模型维度不同（384/1024/1536），切换必须清库重建——代码里 `OpenAICompatibleEmbeddingProvider` 有维度校验兜底。
 
 ## 约定
 

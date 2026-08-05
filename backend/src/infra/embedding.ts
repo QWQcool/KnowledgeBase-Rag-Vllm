@@ -82,8 +82,13 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
           const { pipeline, env } = await import("@huggingface/transformers");
           // 模型缓存到用户主目录，避免污染项目仓库
           env.cacheDir = TRANSFORMERS_CACHE_DIR;
+          // 国内访问 HF 可能失败，支持用环境变量切换镜像（如 https://hf-mirror.com/）
+          if (process.env.HF_ENDPOINT) {
+            env.remoteHost = process.env.HF_ENDPOINT;
+          }
+          // q8 量化模型（model_quantized.onnx）：体积小、下载快、精度足够 RAG 检索
           return await pipeline("feature-extraction", EMBEDDING_MODEL, {
-            dtype: "fp32",
+            dtype: "q8",
           });
         } catch (err) {
           this.extractorPromise = null; // 允许下次重试
@@ -119,9 +124,81 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
   }
 }
 
+/* ===================== OpenAI 兼容（llama-server /v1/embeddings） ===================== */
+
+export interface OpenAICompatibleEmbeddingConfig {
+  /** 如 https://api.openai.com/v1 或 http://localhost:8080/v1（llama-server） */
+  baseUrl?: string;
+  /** 模型名（llama-server 下 --embedding 后的别名，或 OpenAI 的 text-embedding-3-small） */
+  model?: string;
+  apiKey?: string;
+  /** 向量维度，用于校验返回（默认读 EMBEDDING_DIM） */
+  dim?: number;
+}
+
+/**
+ * 走 OpenAI 兼容 /v1/embeddings 的 embedding 实现（Adapter 模式）。
+ * - M4：把 base URL 指向 llama-server，即可用 C++ 推理层出 embedding（如 bge-m3）。
+ * - 与 LLMProvider 的 OpenAICompatibleLLMProvider 对称：同一个 HTTP 边界、同一套 env。
+ *
+ * ⚠️ 维度陷阱：换 embedding 模型 = 维度变 = 已入库向量作废，必须清 data/trivium/ 重建索引。
+ *   默认仍用 Transformers.js（all-MiniLM-L6-v2, 384 维），不破坏现有知识库。
+ */
+export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
+  private readonly baseUrl: string;
+  private readonly model: string;
+  private readonly apiKey: string;
+  private readonly expectedDim: number;
+
+  constructor(config: OpenAICompatibleEmbeddingConfig = {}) {
+    this.baseUrl = (config.baseUrl ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1")
+      .replace(/\/+$/, "")
+      .replace(/\/v1$/, "");
+    this.model = config.model ?? process.env.OPENAI_EMBEDDING_MODEL ?? "";
+    this.apiKey = config.apiKey ?? process.env.OPENAI_API_KEY ?? "";
+    this.expectedDim = config.dim ?? EMBEDDING_DIM;
+  }
+
+  async embed(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) return [];
+    if (!this.model) {
+      throw new Error("未配置 embedding 模型名：请设置 OPENAI_EMBEDDING_MODEL 环境变量");
+    }
+
+    const url = `${this.baseUrl}/v1/embeddings`;
+    const headers: Record<string, string> = { "content-type": "application/json" };
+    if (this.apiKey) headers.authorization = `Bearer ${this.apiKey}`;
+
+    const res = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ model: this.model, input: texts }),
+    });
+    if (!res.ok) {
+      throw new Error(`Embedding API 请求失败 ${res.status}: ${await res.text()}`);
+    }
+
+    const data = (await res.json()) as {
+      data?: { embedding?: number[] }[];
+    };
+    const vectors = data.data?.map((d) => d.embedding);
+    if (!vectors || vectors.some((v) => !Array.isArray(v))) {
+      throw new Error("Embedding API 返回格式异常：缺少 data[].embedding");
+    }
+    // 维度一致性校验——换模型没改 RAG_EMBEDDING_DIM 时第一时间暴露
+    if (vectors[0].length !== this.expectedDim) {
+      throw new Error(
+        `Embedding 维度不匹配：模型返回 ${vectors[0].length} 维，配置期望 ${this.expectedDim} 维。` +
+          `请用 RAG_EMBEDDING_DIM 环境变量对齐，并清 data/trivium/ 重建索引。`,
+      );
+    }
+    return vectors;
+  }
+}
+
 /* ===================== 工厂 ===================== */
 
-export type EmbeddingProviderType = "mock" | "transformers";
+export type EmbeddingProviderType = "mock" | "transformers" | "openai";
 
 /** 按配置切换 embedding 实现（Strategy 模式） */
 export function createEmbeddingProvider(
@@ -132,6 +209,8 @@ export function createEmbeddingProvider(
       return new MockEmbeddingProvider();
     case "transformers":
       return new TransformersEmbeddingProvider();
+    case "openai":
+      return new OpenAICompatibleEmbeddingProvider();
     default:
       throw new Error(`未知 embedding 类型：${String(type)}`);
   }

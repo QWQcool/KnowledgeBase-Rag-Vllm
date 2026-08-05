@@ -18,15 +18,16 @@ import { createLLMProvider } from "./query/llm-provider";
  * bootstrap.ts —— 生产依赖组装（编排层）
  *
  * app.ts 保持纯函数（测试注入 mock），这里负责把真实实现串成完整流水线：
- *   Transformers/Mock embedding + TriviumDB + IngestService + RetrieveService + LLM
+ *   Transformers/Mock/OpenAI兼容 embedding + TriviumDB + IngestService + RetrieveService + LLM
  * 环境变量：
- *   RAG_EMBEDDING=mock|transformers   （缺省 mock：离线/CI 稳，transformers 需下载模型）
- *   LLM_PROVIDER=mock|openai          （缺省 mock；openai 需 OPENAI_BASE_URL/KEY，M4 指向 llama-server）
+ *   RAG_EMBEDDING=mock|transformers|openai  （缺省 mock：离线/CI 稳；transformers 需下载模型；
+ *                                           openai 走 llama-server /v1/embeddings，M4）
+ *   LLM_PROVIDER=mock|openai                （缺省 mock；openai 需 OPENAI_BASE_URL/KEY，M4 指向 llama-server）
  */
 export interface ProductionDeps {
   /** 默认知识库命名空间（演示/单库场景固定；多库由路由层传） */
   knowledgeBaseId: string;
-  embedding: "mock" | "transformers";
+  embedding: "mock" | "transformers" | "openai";
   llm: "mock" | "openai";
   /** 向量库数据目录（测试注入临时目录用；缺省读 TRIVIUM_DATA_DIR/config） */
   dataDir?: string;

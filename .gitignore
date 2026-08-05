@@ -16,3 +16,9 @@ data/
 
 # 日志
 *.log
+
+# M4: 本地 LLM 推理层——GGUF 模型文件不入库（几 GB，机器特定）
+*.gguf
+
+# M4: 性能基准输出（机器/硬件特定，不入库）
+scripts/bench-result.md
