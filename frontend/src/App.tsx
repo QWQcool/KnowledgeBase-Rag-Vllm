@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import {
   STREAM_QUERY_PATH,
   type SourceRef,
@@ -6,8 +6,16 @@ import {
 } from "@rag/shared";
 import "./App.css";
 
-/** dev 环境用相对路径，缺省空串即同源；可通过 VITE_API_BASE 覆盖 */
+/** dev 环境用相对路径，缺省空串即同源（Vite proxy 代理 /api → 后端 3000） */
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
+
+/** 三态主题（沿用 churn 规范：system/light/dark） */
+type Theme = "system" | "light" | "dark";
+const THEMES: { key: Theme; label: string }[] = [
+  { key: "system", label: "跟随系统" },
+  { key: "light", label: "亮色" },
+  { key: "dark", label: "暗色" },
+];
 
 interface AnswerState {
   /** 已生成的回答文本（逐字累加） */
@@ -44,6 +52,11 @@ function App() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   /** 中断控制器引用，便于组件卸载时取消（预留） */
   const abortRef = useRef<AbortController | null>(null);
+  /** 三态主题：写入 <html data-theme>，深浅色由 CSS 变量 + media query 驱动 */
+  const [theme, setTheme] = useState<Theme>("system");
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+  }, [theme]);
 
   const send = useCallback(
     async (e: React.FormEvent) => {
@@ -178,6 +191,20 @@ function App() {
   return (
     <main className="app">
       <h1>RAG 知识库问答</h1>
+
+      <div className="theme-switch" role="group" aria-label="主题切换">
+        {THEMES.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            className={`theme-btn${theme === t.key ? " active" : ""}`}
+            onClick={() => setTheme(t.key)}
+            aria-pressed={theme === t.key}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
       <form className="chat-form" onSubmit={send}>
         <label htmlFor="kbId">知识库 ID</label>

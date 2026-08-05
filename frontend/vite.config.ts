@@ -10,6 +10,13 @@ export default defineConfig({
     fs: {
       allow: [".."],
     },
+    // dev 时把 /api/* 代理到后端（默认 3000），前端代码用相对路径即可
+    proxy: {
+      "/api": {
+        target: "http://localhost:3000",
+        changeOrigin: true,
+      },
+    },
   },
   test: {
     environment: "jsdom",
