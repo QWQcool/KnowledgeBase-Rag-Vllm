@@ -35,16 +35,16 @@ export interface QueryService {
 const SNIPPET_MAX_LEN = 200;
 
 /**
- * 无命中判定阈值：score < 此值视为无关。M2 实测（transformers+中文，
- * all-MiniLM-L6-v2）：TriviumDB 余弦相似度，相关片段 0.30~0.53，
- * 无关 0.28~0.34——0.30 是合理分界（宁缺毋滥，防编造）。可用 RAG_MIN_SCORE 覆盖。
+ * 无命中判定阈值：score < 此值视为无关。可用 RAG_MIN_SCORE 覆盖。
  *
- * M4 实测后从 0.45 调到 0.30：all-MiniLM-L6-v2 是英文模型，对中文问句标点敏感
- * （"向量检索是什么" vs "向量检索是什么？"分数差 0.12），0.45 阈值把无问号的
- * 合理问句也误杀了。0.30 在实测数据里能覆盖相关问句，且 LLM 有片段约束不会编造。
- * 根治方案是换中文 embedding 模型（如 bge-small-zh），换后需重测调整。
+ * M5 实测（multilingual-e5-small + TriviumDB 余弦相似度）：
+ * 相关问题 0.89~0.94，无关问题 0.81~0.84——0.85 是合理分界。
+ *
+ * 历史变迁：M2 初版 0.45（all-MiniLM-L6-v2，英文模型，标点敏感差 0.12）→
+ * M4 调 0.30（过低，multilingual-e5-small 分数普遍高 0.80+，阈值形同虚设）→
+ * M5 定 0.85（换 multilingual-e5-small 后标点差仅 0.007，阈值可以卡高）。
  */
-export const DEFAULT_MIN_SCORE = 0.3;
+export const DEFAULT_MIN_SCORE = 0.85;
 
 export function createQueryService(deps: QueryServiceDeps): QueryService {
   const { retrieveService, llmProvider } = deps;
