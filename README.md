@@ -54,14 +54,15 @@
 - [x] **M2 RAG 流水线**：解析(MD/TXT/PDF)→分块(heading/fixed)→embedding(Transformers/Mock)→**TriviumDB 入库**→检索(topK+minScore 阈值)→LLM 回答(mock/OpenAI 兼容)；`POST /api/ingest` + `POST /api/query`；后端 48 tests 全绿、端到端实测通过（向量库 2026-08-03 由 LanceDB 换为 TriviumDB，业务零改动）
 - [x] **M2 补做 · MCP 接法**：`mcp-server/` 独立 workspace，`retrieve` 工具经 MCP 协议（官方 SDK + stdio）调用 backend `/api/retrieve` 真实检索；mcp-server 5 tests + 端到端实测通过；沉淀 skill `mcp-server-scaffold`
 - [x] **M3 问答体验**：`POST /api/query/stream` SSE 流式（sources→token*→done/error）；前端 `ReadableStream` reader + `TextDecoder` 逐字渲染 + 引用列表可展开 + 错误态不白屏；后端 56 + 前端 6 tests 全绿，端到端实测通过
-- [x] **M4 C++ 推理层**：新增 `OpenAICompatibleEmbeddingProvider`（走 `/v1/embeddings`，含维度校验），`EMBEDDING_DIM` 改可环境变量覆盖；LLM 侧零代码改动（`OpenAICompatibleLLMProvider` 早已预留 llama-server 接入）；后端 61 tests 全绿。本机部署 llama-server（qwen2.5-7b-q4）+ 指向后端 + 性能基准脚本见下方「M4 本机推理层部署」
+- [x] **M4 C++ 推理层**：新增 `OpenAICompatibleEmbeddingProvider`（走 `/v1/embeddings`，含维度校验），`EMBEDDING_DIM` 改可环境变量覆盖；LLM 侧零代码改动（`OpenAICompatibleLLMProvider` 早已预留 llama-server 接入）；后端 61 tests 全绿。本机部署 llama-server（qwen2.5-7b-q4 / qwen3-8b）+ 指向后端 + 性能基准脚本见下方「M4 本机推理层部署」
 - [x] **M5 验收打磨**：检索命中率 **100%**（10 个测试问题：5 相关全命中 + 5 无关全过滤）；minScore 阈值经三轮实测定到 0.85；02 速记卡回填全部真实数字（TTFT 287ms / 103.4 tok/s / GPU 9686 MiB）；后端 61 tests 全绿。**项目完成**
+- [x] **完工后打磨（2026-08-06）**：① 换 Qwen3-8B（5.2GB，Adapter 零代码切换，回答更结构化）；② 前端初音风格聊天式布局 + 模型信息弹窗 + 历史对话侧栏（localStorage）+ MCP 面板；③ 修复 Qwen3 思考模式导致流式空响应（llama-server 加 `--reasoning off`）；④ **一键启动 `start-all.bat`**（双击自动拉起 llama-server + 后端 + 前端）。后端 61 + 前端 6 tests 全绿
 
-## 快速开始（项目已完成 M1→M5）
+## 快速开始（项目已完成，一键启动）
 
-1. 所有里程碑 M1→M5 已完成，详见 `01-项目规划与执行手册.md`。
-2. 每个里程碑：**先读 AC → 照抄「派单提示词」派 Agent → TDD 门禁（`npm test` 全绿）→ 勾掉 AC → 更新本 README 进度**。
-3. 环境要求：Node 22+（前端/后端）、Git；**本地 LLM 推理层（M4）需 llama.cpp + GGUF 模型**，见下方「M4 本机推理层部署」。
+1. **双击 `start-all.bat`** → 自动开 3 个窗口启动 llama-server（:8080）+ 后端（:3000）+ 前端（:5173），浏览器访问 http://localhost:5173
+2. 所有里程碑 M1→M5 已完成，详见 `01-项目规划与执行手册.md`。
+3. 环境要求：Node 22+（前端/后端）、Git；**本地 LLM 推理层（M4）需 llama.cpp + GGUF 模型**，见下方「M4 本机推理层部署」；换机先跑 `node scripts/deploy-llm.mjs` 一键部署模型。
 4. 面试资产：真实数字已回填进 `02-面试学习手册.md` 的速记卡。
 5. 依赖安装：根目录 `npm install`（workspaces 一次装齐三端），测试分别在 backend/ 与 frontend/ 下 `npm test`。
 6. 后端运行（mock 模式，无需推理层）：`cd backend && $env:RAG_EMBEDDING="transformers"; $env:LLM_PROVIDER="mock"; $env:PORT="3000"; npm run start`。
