@@ -649,3 +649,345 @@ body {
     padding: 0.75rem 1rem 1rem;
   }
 }
+
+/* ---- 折叠侧栏 ---- */
+.sidebar.collapsed {
+  width: 48px;
+  padding: 0.75rem 0.5rem;
+}
+
+.sidebar-collapse-btn {
+  width: 100%;
+  padding: 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg-input);
+  color: var(--fg-muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  margin-bottom: 0.75rem;
+}
+
+.sidebar-collapse-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+/* ---- 新建对话 ---- */
+.new-conv-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.6rem;
+  background: var(--bg-card);
+  backdrop-filter: blur(var(--glass-blur));
+  color: var(--fg-strong);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.new-conv-btn:hover {
+  border-color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.new-conv-icon {
+  color: var(--miku-secondary);
+  font-size: 0.9rem;
+}
+
+/* ---- 历史对话列表 ---- */
+.conv-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.conv-empty {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  padding: 0.4rem 0.2rem;
+}
+
+.conv-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.5rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: var(--fg);
+  background: transparent;
+  transition: all 0.15s;
+}
+
+.conv-item:hover {
+  background: var(--accent-soft);
+}
+
+.conv-item.active {
+  background: var(--accent-soft);
+  color: var(--fg-strong);
+  border: 1px solid var(--border-strong);
+}
+
+.conv-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conv-delete {
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+  padding: 0 0.2rem;
+  border-radius: 0.25rem;
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.conv-item:hover .conv-delete {
+  opacity: 1;
+}
+
+.conv-delete:hover {
+  color: var(--error-fg);
+}
+
+/* ---- 侧栏链接（模型信息 / MCP） ---- */
+.side-link {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--fg);
+  font-size: 0.8rem;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.15s;
+}
+
+.side-link:hover {
+  background: var(--accent-soft);
+  color: var(--fg-strong);
+}
+
+.side-link-icon {
+  color: var(--miku-secondary);
+  font-size: 0.85rem;
+  width: 16px;
+  text-align: center;
+}
+
+/* ---- 弹窗 ---- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  animation: fadeIn 0.2s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.modal-card {
+  width: 420px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: var(--bg-card);
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  box-shadow: 0 8px 40px var(--accent-glow), var(--shadow);
+  animation: modalIn 0.25s ease-out;
+}
+
+@keyframes modalIn {
+  from { opacity: 0; transform: translateY(16px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--fg-strong);
+}
+
+.modal-close {
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  font-size: 1.2rem;
+  cursor: pointer;
+  padding: 0.2rem 0.4rem;
+  border-radius: 0.35rem;
+  transition: all 0.15s;
+}
+
+.modal-close:hover {
+  background: var(--accent-soft);
+  color: var(--fg-strong);
+}
+
+.modal-body {
+  padding: 1.25rem;
+}
+
+.modal-error {
+  color: var(--error-fg);
+  font-size: 0.85rem;
+  text-align: center;
+  padding: 1rem 0;
+}
+
+/* ---- 模型信息 ---- */
+.model-info .model-name {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--fg-strong);
+  padding: 0.4rem 0.6rem;
+  background: var(--accent-soft);
+  border-radius: 0.6rem;
+  cursor: pointer;
+  margin-bottom: 1rem;
+  display: inline-block;
+  transition: all 0.2s;
+}
+
+.model-info .model-name:hover {
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.model-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+}
+
+.model-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+}
+
+.model-k {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+}
+
+.model-v {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--fg-strong);
+}
+
+/* ---- MCP 面板 ---- */
+.mcp-server {
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.mcp-server + .mcp-server {
+  margin-top: 0.75rem;
+}
+
+.mcp-server-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.9rem;
+  background: var(--bg-soft);
+}
+
+.mcp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--miku-primary);
+  box-shadow: 0 0 6px var(--miku-primary);
+}
+
+.mcp-name {
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--fg-strong);
+  flex: 1;
+}
+
+.mcp-status {
+  font-size: 0.72rem;
+  color: var(--miku-secondary);
+  background: var(--score-bg);
+  padding: 0.1rem 0.5rem;
+  border-radius: 0.5rem;
+}
+
+.mcp-tools {
+  padding: 0.5rem 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.mcp-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  padding: 0.5rem 0.7rem;
+  background: var(--bg-soft);
+  border-radius: 0.5rem;
+}
+
+.mcp-tool-name {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--miku-secondary);
+}
+
+.mcp-tool-desc {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  line-height: 1.4;
+}

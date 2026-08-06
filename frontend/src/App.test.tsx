@@ -83,9 +83,9 @@ describe("M3 流式问答页", () => {
     });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
 
-    // 等待回答文本逐字累加完成
-    const answer = await screen.findByText("你好", {}, { timeout: 2000 });
-    expect(answer).toBeTruthy();
+    // 等待回答文本逐字累加完成（消息气泡内，排除历史对话标题）
+    const answer = await screen.findAllByText("你好", {}, { timeout: 2000 });
+    expect(answer.length).toBeGreaterThan(0);
 
     // 引用列表出现
     expect(await screen.findByText("产品手册.pdf")).toBeTruthy();

@@ -25,6 +25,32 @@ interface ChatMessage {
   isStreaming?: boolean;
 }
 
+/** 一次对话（历史记录持久化到 localStorage） */
+interface Conversation {
+  id: string;
+  title: string;
+  createdAt: number;
+  messages: ChatMessage[];
+}
+
+/** 模型信息（来自 llama-server /v1/models） */
+interface ModelInfo {
+  id: string;
+  meta?: {
+    n_params?: number;
+    n_ctx?: number;
+    n_ctx_train?: number;
+    n_embd?: number;
+    ftype?: string;
+    size?: number;
+  } | null;
+}
+
+/** 对话框（弹窗）打开状态 */
+interface ModalState {
+  type: "model" | "mcp" | null;
+}
+
 interface AnswerState {
   messages: ChatMessage[];
   loading: boolean;
@@ -51,19 +77,63 @@ const QUICK_QUESTIONS = [
   "RAG 有什么优势？",
 ];
 
+/** localStorage 历史对话 key */
+const CONV_KEY = "rag.conversations.v1";
+
+/** 读历史对话（防 JSON 损坏） */
+function loadConversations(): Conversation[] {
+  try {
+    const raw = localStorage.getItem(CONV_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+
+/** 数值格式化：参数 → 十亿单位，字节 → GB */
+function fmtParams(n?: number): string {
+  if (!n) return "未知";
+  return `${(n / 1e9).toFixed(2)}B`;
+}
+function fmtBytes(n?: number): string {
+  if (!n) return "未知";
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
 /**
- * M5 美化版 · 聊天式布局 · 初音风格
- * - 侧栏（知识库ID + 主题切换 + 信息）
- * - 消息列表（用户/AI 气泡 + 引用折叠 + 打字指示器）
- * - 底部输入栏
+ * M5 美化版 v2 · 初音风格 · 贴近 llama Web UI
+ * - 模型信息弹窗（点击模型名 → GET /api/model）
+ * - 侧栏历史对话（localStorage 持久化）+ 新建对话 + 可折叠
+ * - MCP 服务器面板（GET /api/mcp-tools）
  */
 function App() {
   const [question, setQuestion] = useState("");
   const [kbId, setKbId] = useState("default");
   const [state, setState] = useState<AnswerState>(INITIAL);
+  const [theme, setTheme] = useState<Theme>("system");
+  /** 历史对话列表 */
+  const [conversations, setConversations] = useState<Conversation[]>(() =>
+    loadConversations(),
+  );
+  /** 当前对话 id（null = 未命名/欢迎页） */
+  const [activeConvId, setActiveConvId] = useState<string | null>(null);
+  /** 侧栏是否折叠 */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  /** 弹窗 */
+  const [modal, setModal] = useState<ModalState>({ type: null });
+  /** 模型信息数据 */
+  const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
+  /** MCP 工具数据 */
+  const [mcpData, setMcpData] = useState<{
+    servers: { name: string; status: string; tools: { name: string; description: string }[] }[];
+  } | null>(null);
+  /** 弹窗加载态 */
+  const [modalLoading, setModalLoading] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  const [theme, setTheme] = useState<Theme>("system");
 
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
@@ -78,24 +148,127 @@ function App() {
     scrollToBottom();
   }, [state.messages, scrollToBottom]);
 
+  /** 持久化历史对话 */
+  useEffect(() => {
+    try {
+      localStorage.setItem(CONV_KEY, JSON.stringify(conversations));
+    } catch {
+      /* 存储满/隐私模式忽略 */
+    }
+  }, [conversations]);
+
+  /** 保存当前对话（消息变化时更新历史记录） */
+  const saveActiveConversation = useCallback(
+    (messages: ChatMessage[]) => {
+      setConversations((prev) => {
+        if (!activeConvId) return prev;
+        const firstUser = messages.find((m) => m.role === "user");
+        return prev.map((c) =>
+          c.id === activeConvId
+            ? {
+                ...c,
+                title: firstUser?.text.slice(0, 20) || c.title,
+                messages,
+              }
+            : c,
+        );
+      });
+    },
+    [activeConvId],
+  );
+
+  /** 新建对话 */
+  const newConversation = useCallback(() => {
+    abortRef.current?.abort();
+    setState(INITIAL);
+    setActiveConvId(null);
+    setQuestion("");
+  }, []);
+
+  /** 打开历史对话 */
+  const openConversation = useCallback(
+    (id: string) => {
+      const conv = conversations.find((c) => c.id === id);
+      if (!conv) return;
+      abortRef.current?.abort();
+      setState({
+        ...INITIAL,
+        messages: conv.messages.map((m) => ({ ...m, isStreaming: false })),
+      });
+      setActiveConvId(id);
+      setQuestion("");
+    },
+    [conversations],
+  );
+
+  /** 删除历史对话 */
+  const deleteConversation = useCallback((id: string) => {
+    setConversations((prev) => prev.filter((c) => c.id !== id));
+    if (id === activeConvId) {
+      setState(INITIAL);
+      setActiveConvId(null);
+    }
+  }, [activeConvId]);
+
+  /** 加载模型信息（点击模型名触发） */
+  const openModelInfo = useCallback(async () => {
+    setModal({ type: "model" });
+    setModalLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/model`);
+      if (!res.ok) {
+        setModelInfo(null);
+      } else {
+        setModelInfo((await res.json()) as ModelInfo);
+      }
+    } catch {
+      setModelInfo(null);
+    } finally {
+      setModalLoading(false);
+    }
+  }, []);
+
+  /** 加载 MCP 工具列表 */
+  const openMcpPanel = useCallback(async () => {
+    setModal({ type: "mcp" });
+    setModalLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/mcp-tools`);
+      if (res.ok) {
+        setMcpData(await res.json());
+      } else {
+        setMcpData(null);
+      }
+    } catch {
+      setMcpData(null);
+    } finally {
+      setModalLoading(false);
+    }
+  }, []);
+
   const send = useCallback(
     async (q: string) => {
       const trimmed = q.trim();
       if (!trimmed) return;
 
-      // 添加用户消息，准备接收 AI 回复
-      setState((prev) => ({
-        ...prev,
-        error: null,
-        expanded: new Set(),
-        sourcesCollapsed: false,
-        loading: true,
-        messages: [
+      // 首次提问自动创建对话
+      if (!activeConvId) {
+        const newId = `conv-${Date.now()}`;
+        setActiveConvId(newId);
+        setConversations((prev) => [
+          { id: newId, title: trimmed.slice(0, 20), createdAt: Date.now(), messages: [] },
+          ...prev,
+        ]);
+      }
+
+      setState((prev) => {
+        const msgs = [
           ...prev.messages,
-          { role: "user", text: trimmed },
-          { role: "assistant", text: "", sources: [], isStreaming: true },
-        ],
-      }));
+          { role: "user" as const, text: trimmed },
+          { role: "assistant" as const, text: "", sources: [], isStreaming: true },
+        ];
+        return { ...prev, error: null, expanded: new Set(), sourcesCollapsed: false, loading: true, messages: msgs };
+      });
       setQuestion("");
 
       const controller = new AbortController();
@@ -105,10 +278,7 @@ function App() {
         const res = await fetch(`${API_BASE}${STREAM_QUERY_PATH}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            question: trimmed,
-            knowledgeBaseId: kbId,
-          }),
+          body: JSON.stringify({ question: trimmed, knowledgeBaseId: kbId }),
           signal: controller.signal,
         });
 
@@ -119,6 +289,7 @@ function App() {
             if (last?.role === "assistant") {
               msgs[msgs.length - 1] = { ...last, text: "问题不能为空", isStreaming: false };
             }
+            saveActiveConversation(msgs);
             return { ...prev, messages: msgs, loading: false, error: "问题不能为空" };
           });
           return;
@@ -130,6 +301,7 @@ function App() {
             if (last?.role === "assistant") {
               msgs[msgs.length - 1] = { ...last, text: "无法连接后端，请检查服务是否启动", isStreaming: false };
             }
+            saveActiveConversation(msgs);
             return { ...prev, messages: msgs, loading: false, error: "无法连接后端" };
           });
           return;
@@ -146,26 +318,19 @@ function App() {
         let doneMessage: string | undefined;
 
         const flush = (ev: StreamingEvent) => {
-          if (ev.type === "sources") {
-            sources = ev.sources;
-          } else if (ev.type === "token") {
-            text += ev.delta;
-          } else if (ev.type === "done") {
-            done = true;
-            doneMessage = ev.message;
-          } else if (ev.type === "error") {
-            done = true;
-            errMsg = ev.message;
-          }
+          if (ev.type === "sources") sources = ev.sources;
+          else if (ev.type === "token") text += ev.delta;
+          else if (ev.type === "done") { done = true; doneMessage = ev.message; }
+          else if (ev.type === "error") { done = true; errMsg = ev.message; }
 
-          // 增量更新最后一条 AI 消息
           setState((prev) => {
             const msgs = [...prev.messages];
             const last = msgs[msgs.length - 1];
             if (last?.role === "assistant") {
-              const finalText = (errMsg === null && done && text === "" && doneMessage)
-                ? doneMessage
-                : text;
+              const finalText =
+                errMsg === null && done && text === "" && doneMessage
+                  ? doneMessage
+                  : text;
               msgs[msgs.length - 1] = {
                 ...last,
                 text: finalText,
@@ -173,7 +338,10 @@ function App() {
                 isStreaming: !done,
               };
             }
-            return { ...prev, messages: msgs, loading: !done, error: errMsg };
+            const next = { ...prev, messages: msgs, loading: !done, error: errMsg };
+            // 完成后持久化
+            if (done) saveActiveConversation(msgs);
+            return next;
           });
         };
 
@@ -205,11 +373,12 @@ function App() {
           if (last?.role === "assistant") {
             msgs[msgs.length - 1] = { ...last, text: "无法连接后端，请检查服务是否启动", isStreaming: false };
           }
+          saveActiveConversation(msgs);
           return { ...prev, messages: msgs, loading: false, error: "无法连接后端" };
         });
       }
     },
-    [kbId],
+    [kbId, activeConvId, saveActiveConversation],
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -234,58 +403,119 @@ function App() {
   const lastMessage = state.messages[state.messages.length - 1];
   const showSources = lastMessage?.sources && lastMessage.sources.length > 0;
 
+  const closeModal = () => {
+    setModal({ type: null });
+    setModelInfo(null);
+    setMcpData(null);
+  };
+
   return (
     <div className="app">
       {/* 侧栏 */}
-      <aside className="sidebar">
-        <div className="sidebar-header">
-          <div className="miku-icon">♪</div>
-          <div>
-            <h1 className="sidebar-title">RAG 知识库</h1>
-            <p className="sidebar-subtitle">Powered by Qwen3-8B</p>
-          </div>
-        </div>
+      <aside className={`sidebar${sidebarCollapsed ? " collapsed" : ""}`}>
+        {/* 折叠开关 */}
+        <button
+          className="sidebar-collapse-btn"
+          onClick={() => setSidebarCollapsed((v) => !v)}
+          aria-label={sidebarCollapsed ? "展开侧栏" : "折叠侧栏"}
+        >
+          {sidebarCollapsed ? "»" : "«"}
+        </button>
 
-        <div className="sidebar-section">
-          <label className="sidebar-label" htmlFor="kbId">知识库 ID</label>
-          <input
-            id="kbId"
-            className="kb-input"
-            type="text"
-            value={kbId}
-            onChange={(e) => setKbId(e.target.value)}
-            disabled={busy}
-            placeholder="default"
-          />
-        </div>
+        {!sidebarCollapsed && (
+          <>
+            <div className="sidebar-header">
+              <div className="miku-icon">♪</div>
+              <div>
+                <h1 className="sidebar-title">RAG 知识库</h1>
+                <p className="sidebar-subtitle">Powered by Qwen3-8B</p>
+              </div>
+            </div>
 
-        <div className="sidebar-section">
-          <label className="sidebar-label">主题</label>
-          <div className="theme-switch" role="group" aria-label="主题切换">
-            {THEMES.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                className={`theme-btn${theme === t.key ? " active" : ""}`}
-                onClick={() => setTheme(t.key)}
-                aria-pressed={theme === t.key}
-              >
-                {t.label}
+            {/* 新建对话 */}
+            <button className="new-conv-btn" onClick={newConversation}>
+              <span className="new-conv-icon">✎</span> 新建对话
+            </button>
+
+            {/* 历史对话 */}
+            <div className="sidebar-section">
+              <label className="sidebar-label">历史对话</label>
+              <div className="conv-list">
+                {conversations.length === 0 && (
+                  <div className="conv-empty">暂无历史对话</div>
+                )}
+                {conversations.map((c) => (
+                  <div
+                    key={c.id}
+                    className={`conv-item${c.id === activeConvId ? " active" : ""}`}
+                    onClick={() => openConversation(c.id)}
+                  >
+                    <span className="conv-title">{c.title}</span>
+                    <button
+                      className="conv-delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        deleteConversation(c.id);
+                      }}
+                      aria-label="删除对话"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="sidebar-section">
+              <label className="sidebar-label">知识库 ID</label>
+              <input
+                id="kbId"
+                className="kb-input"
+                type="text"
+                value={kbId}
+                onChange={(e) => setKbId(e.target.value)}
+                disabled={busy}
+                placeholder="default"
+              />
+            </div>
+
+            <div className="sidebar-section">
+              <label className="sidebar-label">主题</label>
+              <div className="theme-switch" role="group" aria-label="主题切换">
+                {THEMES.map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    className={`theme-btn${theme === t.key ? " active" : ""}`}
+                    onClick={() => setTheme(t.key)}
+                    aria-pressed={theme === t.key}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 模型信息 + MCP 入口 */}
+            <div className="sidebar-section">
+              <label className="sidebar-label">系统</label>
+              <button className="side-link" onClick={openModelInfo}>
+                <span className="side-link-icon">◈</span> 模型信息
               </button>
-            ))}
-          </div>
-        </div>
+              <button className="side-link" onClick={openMcpPanel}>
+                <span className="side-link-icon">⇄</span> MCP 服务器
+              </button>
+            </div>
 
-        <div className="sidebar-info">
-          本地大模型推理<br />
-          TS 全栈 + C++ llama.cpp<br />
-          检索命中率 100%
-        </div>
+            <div className="sidebar-info">
+              本地大模型推理<br />TS 全栈 + C++ llama.cpp<br />检索命中率 100%
+            </div>
+          </>
+        )}
       </aside>
 
       {/* 主聊天区 */}
       <main className="chat-main">
-        {/* 消息列表 */}
         <div className="chat-messages">
           {state.messages.length === 0 && (
             <div className="welcome">
@@ -294,12 +524,7 @@ function App() {
               <p className="welcome-subtitle">基于本地文档的 RAG 问答 · 回答可溯源</p>
               <div className="welcome-tips">
                 {QUICK_QUESTIONS.map((q) => (
-                  <button
-                    key={q}
-                    className="welcome-tip"
-                    onClick={() => send(q)}
-                    disabled={busy}
-                  >
+                  <button key={q} className="welcome-tip" onClick={() => send(q)} disabled={busy}>
                     {q}
                   </button>
                 ))}
@@ -309,9 +534,7 @@ function App() {
 
           {state.messages.map((msg, i) => (
             <div key={i} className={`message ${msg.role}`}>
-              <div className="msg-avatar">
-                {msg.role === "user" ? "你" : "♪"}
-              </div>
+              <div className="msg-avatar">{msg.role === "user" ? "你" : "♪"}</div>
               <div className="msg-bubble">
                 {msg.isStreaming && msg.text === "" ? (
                   <div className="typing-indicator">
@@ -326,60 +549,48 @@ function App() {
             </div>
           ))}
 
-          {/* 引用来源（最后一条 AI 消息的） */}
-          {showSources && !state.sourcesCollapsed && (
+          {showSources && (
             <div className="sources">
               <button className="sources-toggle" onClick={toggleSourcesCollapse}>
-                <span className="arrow open">▸</span>
+                <span className={`arrow${state.sourcesCollapsed ? "" : " open"}`}>▸</span>
                 引用来源（{lastMessage!.sources!.length}）
               </button>
-              <div className="sources-list">
-                {lastMessage!.sources!.map((s) => {
-                  const open = state.expanded.has(s.documentId);
-                  return (
-                    <div key={s.documentId} className="source-item">
-                      <button
-                        type="button"
-                        className="source-head"
-                        onClick={() => toggleSource(s.documentId)}
-                        aria-expanded={open}
-                      >
-                        <span className="source-name">{s.documentName}</span>
-                        {typeof s.score === "number" && (
-                          <span className="source-score">
-                            {s.score.toFixed(2)}
-                          </span>
-                        )}
-                        <span className="source-toggle">{open ? "收起" : "展开"}</span>
-                      </button>
-                      {open && <pre className="source-snippet">{s.snippet}</pre>}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {showSources && state.sourcesCollapsed && (
-            <div className="sources">
-              <button className="sources-toggle" onClick={toggleSourcesCollapse}>
-                <span className="arrow">▸</span>
-                引用来源（{lastMessage!.sources!.length}）
-              </button>
+              {!state.sourcesCollapsed && (
+                <div className="sources-list">
+                  {lastMessage!.sources!.map((s) => {
+                    const open = state.expanded.has(s.documentId);
+                    return (
+                      <div key={s.documentId} className="source-item">
+                        <button
+                          type="button"
+                          className="source-head"
+                          onClick={() => toggleSource(s.documentId)}
+                          aria-expanded={open}
+                        >
+                          <span className="source-name">{s.documentName}</span>
+                          {typeof s.score === "number" && (
+                            <span className="source-score">{s.score.toFixed(2)}</span>
+                          )}
+                          <span className="source-toggle">{open ? "收起" : "展开"}</span>
+                        </button>
+                        {open && <pre className="source-snippet">{s.snippet}</pre>}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           )}
 
           <div ref={messagesEndRef} />
         </div>
 
-        {/* 错误提示 */}
         {state.error && (
           <div className="error" role="alert" style={{ margin: "0 2rem 0.5rem" }}>
             {state.error}
           </div>
         )}
 
-        {/* 底部输入栏 */}
         <div className="chat-input-area">
           <form className="chat-form" onSubmit={handleSubmit}>
             <input
@@ -396,6 +607,98 @@ function App() {
           </form>
         </div>
       </main>
+
+      {/* 模型信息弹窗 */}
+      {modal.type === "model" && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>模型信息</h3>
+              <button className="modal-close" onClick={closeModal}>×</button>
+            </div>
+            <div className="modal-body">
+              {modalLoading ? (
+                <div className="typing-indicator">
+                  <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+                </div>
+              ) : modelInfo ? (
+                <div className="model-info">
+                  <div className="model-name" onClick={openModelInfo}>
+                    ◈ {modelInfo.id.split("/").pop()?.replace(".gguf", "")}
+                  </div>
+                  <div className="model-grid">
+                    <div className="model-cell">
+                      <span className="model-k">参数</span>
+                      <span className="model-v">{fmtParams(modelInfo.meta?.n_params)}</span>
+                    </div>
+                    <div className="model-cell">
+                      <span className="model-k">量化</span>
+                      <span className="model-v">{modelInfo.meta?.ftype ?? "未知"}</span>
+                    </div>
+                    <div className="model-cell">
+                      <span className="model-k">上下文</span>
+                      <span className="model-v">{modelInfo.meta?.n_ctx ?? "未知"} tokens</span>
+                    </div>
+                    <div className="model-cell">
+                      <span className="model-k">文件大小</span>
+                      <span className="model-v">{fmtBytes(modelInfo.meta?.size)}</span>
+                    </div>
+                    <div className="model-cell">
+                      <span className="model-k">训练上下文</span>
+                      <span className="model-v">{modelInfo.meta?.n_ctx_train ?? "未知"}</span>
+                    </div>
+                    <div className="model-cell">
+                      <span className="model-k">隐藏维度</span>
+                      <span className="model-v">{modelInfo.meta?.n_embd ?? "未知"}</span>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="modal-error">无法获取模型信息，请确认 llama-server 已启动</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MCP 弹窗 */}
+      {modal.type === "mcp" && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>MCP 服务器</h3>
+              <button className="modal-close" onClick={closeModal}>×</button>
+            </div>
+            <div className="modal-body">
+              {modalLoading ? (
+                <div className="typing-indicator">
+                  <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+                </div>
+              ) : mcpData && mcpData.servers.length > 0 ? (
+                mcpData.servers.map((srv) => (
+                  <div key={srv.name} className="mcp-server">
+                    <div className="mcp-server-head">
+                      <span className="mcp-dot" />
+                      <span className="mcp-name">{srv.name}</span>
+                      <span className="mcp-status">{srv.status}</span>
+                    </div>
+                    <div className="mcp-tools">
+                      {srv.tools.map((t) => (
+                        <div key={t.name} className="mcp-tool">
+                          <span className="mcp-tool-name">{t.name}</span>
+                          <span className="mcp-tool-desc">{t.description}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="modal-error">无法获取 MCP 工具列表</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

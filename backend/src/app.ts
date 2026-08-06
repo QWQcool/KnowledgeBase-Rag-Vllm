@@ -85,6 +85,57 @@ export function createApp(deps?: Partial<AppDeps>) {
 
   // ================= M2 问答编排 =================
 
+  // GET /api/model —— 模型信息（代理 llama-server /v1/models，前端免跨域）
+  app.get(`${API_PREFIX}/model`, async (c) => {
+    const baseUrl = (process.env.OPENAI_BASE_URL ?? "http://127.0.0.1:8080/v1")
+      .replace(/\/+$/, "")
+      .replace(/\/v1$/, "");
+    try {
+      const res = await fetch(`${baseUrl}/v1/models`);
+      if (!res.ok) {
+        return c.json({ error: `llama-server 返回 ${res.status}` }, 502);
+      }
+      const data = await res.json();
+      const m = data?.data?.[0];
+      if (!m) return c.json({ error: "未发现模型" }, 404);
+      // 提炼前端展示字段（meta 是 llama.cpp 的结构化元数据）
+      return c.json({
+        id: m.id,
+        meta: m.meta ?? null,
+        raw: { n_vocab: m.meta?.n_vocab, ftype: m.meta?.ftype },
+      });
+    } catch {
+      return c.json(
+        { error: "无法连接 llama-server，请检查推理层是否启动" },
+        502,
+      );
+    }
+  });
+
+  // GET /api/mcp-tools —— MCP 工具列表（mcp-server 注册的 retrieve 工具）
+  app.get(`${API_PREFIX}/mcp-tools`, (c) =>
+    c.json({
+      servers: [
+        {
+          name: "rag-knowledge",
+          status: "connected",
+          tools: [
+            {
+              name: "retrieve",
+              description:
+                "从知识库检索与 query 最相关的文档片段（RAG 检索）",
+              inputSchema: {
+                query: "string",
+                top_k: "number",
+                knowledge_base_id: "string",
+              },
+            },
+          ],
+        },
+      ],
+    }),
+  );
+
   // POST /api/query —— 问答编排（M3 加流式 SSE）
   app.post(`${API_PREFIX}/query`, async (c) => {
     const raw = await c.req.json().catch(() => null);
