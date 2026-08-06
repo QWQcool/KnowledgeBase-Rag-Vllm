@@ -293,8 +293,17 @@ body {
 .message {
   display: flex;
   gap: 0.75rem;
-  max-width: 800px;
+  max-width: 100%;
   animation: msgIn 0.3s ease-out;
+}
+
+/* 用户消息整体右对齐，气泡不自撑满 */
+.message.user .msg-bubble {
+  max-width: 78%;
+}
+
+.message.assistant .msg-bubble {
+  max-width: 92%;
 }
 
 @keyframes msgIn {
@@ -379,7 +388,7 @@ body {
 
 /* ---- 引用来源（内嵌在回答气泡后） ---- */
 .sources {
-  max-width: 800px;
+  max-width: 92%;
 }
 
 .sources-toggle {
@@ -490,7 +499,7 @@ body {
 
 /* ---- 错误态 ---- */
 .error {
-  max-width: 800px;
+  max-width: 92%;
   padding: 0.75rem 1rem;
   border: 1px solid var(--error-border);
   background: var(--error-bg);
@@ -511,8 +520,7 @@ body {
 .chat-form {
   display: flex;
   gap: 0.6rem;
-  max-width: 800px;
-  margin: 0 auto;
+  max-width: 100%;
 }
 
 .chat-input {
