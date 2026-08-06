@@ -17,58 +17,87 @@ const THEMES: { key: Theme; label: string }[] = [
   { key: "dark", label: "暗色" },
 ];
 
-interface AnswerState {
-  /** 已生成的回答文本（逐字累加） */
+/** 单条消息（用户或 AI） */
+interface ChatMessage {
+  role: "user" | "assistant";
   text: string;
-  /** 引用来源列表（sources 事件先于 token 到达） */
-  sources: SourceRef[];
-  /** 流是否结束（done / error） */
-  finished: boolean;
-  /** 错误文案，null 表示无错误 */
-  error: string | null;
-  /** 是否正在流式接收 */
+  sources?: SourceRef[];
+  isStreaming?: boolean;
+}
+
+interface AnswerState {
+  messages: ChatMessage[];
   loading: boolean;
+  error: string | null;
+  /** 展开了 snippet 的 documentId 集合 */
+  expanded: Set<string>;
+  /** 引用来源是否折叠 */
+  sourcesCollapsed: boolean;
 }
 
 const INITIAL: AnswerState = {
-  text: "",
-  sources: [],
-  finished: false,
-  error: null,
+  messages: [],
   loading: false,
+  error: null,
+  expanded: new Set(),
+  sourcesCollapsed: false,
 };
 
+/** 欢迎页快捷问题 */
+const QUICK_QUESTIONS = [
+  "什么是RAG？",
+  "为什么后端选 TypeScript 而不是 Python？",
+  "向量检索是什么？",
+  "RAG 有什么优势？",
+];
+
 /**
- * M3 流式问答页：
- * - 表单提交后 POST /api/query/stream，SSE 流式接收
- * - sources 先到 → 渲染引用列表；token → 逐字累加；done → 结束；error → 友好文案
- * - 任何错误态都不白屏，可重新输入发送
+ * M5 美化版 · 聊天式布局 · 初音风格
+ * - 侧栏（知识库ID + 主题切换 + 信息）
+ * - 消息列表（用户/AI 气泡 + 引用折叠 + 打字指示器）
+ * - 底部输入栏
  */
 function App() {
   const [question, setQuestion] = useState("");
   const [kbId, setKbId] = useState("default");
-  const [answer, setAnswer] = useState<AnswerState>(INITIAL);
-  /** 展开了 snippet 的 documentId 集合 */
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  /** 中断控制器引用，便于组件卸载时取消（预留） */
+  const [state, setState] = useState<AnswerState>(INITIAL);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
-  /** 三态主题：写入 <html data-theme>，深浅色由 CSS 变量 + media query 驱动 */
   const [theme, setTheme] = useState<Theme>("system");
+
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
 
+  /** 自动滚动到底部（jsdom 无 scrollIntoView，加守卫） */
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [state.messages, scrollToBottom]);
+
   const send = useCallback(
-    async (e: React.FormEvent) => {
-      e.preventDefault();
-      const q = question.trim();
-      if (!q) {
-        setAnswer({ ...INITIAL, error: "问题不能为空", finished: true });
-        return;
-      }
-      // 重置状态
-      setExpanded(new Set());
-      setAnswer({ ...INITIAL, loading: true });
+    async (q: string) => {
+      const trimmed = q.trim();
+      if (!trimmed) return;
+
+      // 添加用户消息，准备接收 AI 回复
+      setState((prev) => ({
+        ...prev,
+        error: null,
+        expanded: new Set(),
+        sourcesCollapsed: false,
+        loading: true,
+        messages: [
+          ...prev.messages,
+          { role: "user", text: trimmed },
+          { role: "assistant", text: "", sources: [], isStreaming: true },
+        ],
+      }));
+      setQuestion("");
+
       const controller = new AbortController();
       abortRef.current = controller;
 
@@ -77,30 +106,36 @@ function App() {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            question: q,
+            question: trimmed,
             knowledgeBaseId: kbId,
           }),
           signal: controller.signal,
         });
 
         if (res.status === 422) {
-          setAnswer({
-            ...INITIAL,
-            finished: true,
-            error: "问题不能为空",
+          setState((prev) => {
+            const msgs = [...prev.messages];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === "assistant") {
+              msgs[msgs.length - 1] = { ...last, text: "问题不能为空", isStreaming: false };
+            }
+            return { ...prev, messages: msgs, loading: false, error: "问题不能为空" };
           });
           return;
         }
         if (!res.ok || !res.body) {
-          setAnswer({
-            ...INITIAL,
-            finished: true,
-            error: "无法连接后端，请检查服务是否启动",
+          setState((prev) => {
+            const msgs = [...prev.messages];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === "assistant") {
+              msgs[msgs.length - 1] = { ...last, text: "无法连接后端，请检查服务是否启动", isStreaming: false };
+            }
+            return { ...prev, messages: msgs, loading: false, error: "无法连接后端" };
           });
           return;
         }
 
-        // SSE 解析：按 `data: ...\n\n` 分帧
+        // SSE 解析
         const reader = res.body.getReader();
         const decoder = new TextDecoder("utf-8");
         let buffer = "";
@@ -110,7 +145,6 @@ function App() {
         let errMsg: string | null = null;
         let doneMessage: string | undefined;
 
-        // 增量更新视图：每解析到一条事件就 setState 一次
         const flush = (ev: StreamingEvent) => {
           if (ev.type === "sources") {
             sources = ev.sources;
@@ -123,12 +157,23 @@ function App() {
             done = true;
             errMsg = ev.message;
           }
-          setAnswer({
-            text,
-            sources,
-            finished: done,
-            error: errMsg,
-            loading: !done,
+
+          // 增量更新最后一条 AI 消息
+          setState((prev) => {
+            const msgs = [...prev.messages];
+            const last = msgs[msgs.length - 1];
+            if (last?.role === "assistant") {
+              const finalText = (errMsg === null && done && text === "" && doneMessage)
+                ? doneMessage
+                : text;
+              msgs[msgs.length - 1] = {
+                ...last,
+                text: finalText,
+                sources: sources.length > 0 ? sources : last.sources,
+                isStreaming: !done,
+              };
+            }
+            return { ...prev, messages: msgs, loading: !done, error: errMsg };
           });
         };
 
@@ -136,7 +181,6 @@ function App() {
           const { value, done: streamDone } = await reader.read();
           if (streamDone) break;
           buffer += decoder.decode(value, { stream: true });
-          // 按 SSE 帧分隔符切分
           let idx: number;
           while ((idx = buffer.indexOf("\n\n")) !== -1) {
             const frame = buffer.slice(0, idx);
@@ -149,132 +193,210 @@ function App() {
               const ev = JSON.parse(jsonStr) as StreamingEvent;
               flush(ev);
             } catch {
-              // 忽略无法解析的帧，保证流不中断
+              // 忽略无法解析的帧
             }
           }
         }
-
-        // 流结束后：若回答为空且 done.message 存在，把提示作为回答文案
-        if (errMsg === null && done && text === "" && doneMessage) {
-          setAnswer({
-            text: doneMessage,
-            sources,
-            finished: true,
-            error: null,
-            loading: false,
-          });
-        }
       } catch (err) {
-        // 网络失败 / abort
         if ((err as Error)?.name === "AbortError") return;
-        setAnswer({
-          ...INITIAL,
-          finished: true,
-          error: "无法连接后端，请检查服务是否启动",
+        setState((prev) => {
+          const msgs = [...prev.messages];
+          const last = msgs[msgs.length - 1];
+          if (last?.role === "assistant") {
+            msgs[msgs.length - 1] = { ...last, text: "无法连接后端，请检查服务是否启动", isStreaming: false };
+          }
+          return { ...prev, messages: msgs, loading: false, error: "无法连接后端" };
         });
       }
     },
-    [question, kbId],
+    [kbId],
   );
 
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    send(question);
+  };
+
   const toggleSource = (docId: string) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
+    setState((prev) => {
+      const next = new Set(prev.expanded);
       if (next.has(docId)) next.delete(docId);
       else next.add(docId);
-      return next;
+      return { ...prev, expanded: next };
     });
   };
 
-  const busy = answer.loading;
+  const toggleSourcesCollapse = () => {
+    setState((prev) => ({ ...prev, sourcesCollapsed: !prev.sourcesCollapsed }));
+  };
+
+  const busy = state.loading;
+  const lastMessage = state.messages[state.messages.length - 1];
+  const showSources = lastMessage?.sources && lastMessage.sources.length > 0;
 
   return (
-    <main className="app">
-      <h1>RAG 知识库问答</h1>
-
-      <div className="theme-switch" role="group" aria-label="主题切换">
-        {THEMES.map((t) => (
-          <button
-            key={t.key}
-            type="button"
-            className={`theme-btn${theme === t.key ? " active" : ""}`}
-            onClick={() => setTheme(t.key)}
-            aria-pressed={theme === t.key}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-
-      <form className="chat-form" onSubmit={send}>
-        <label htmlFor="kbId">知识库 ID</label>
-        <input
-          id="kbId"
-          name="kbId"
-          type="text"
-          value={kbId}
-          onChange={(e) => setKbId(e.target.value)}
-          disabled={busy}
-          placeholder="default"
-        />
-        <label htmlFor="question">向知识库提问</label>
-        <input
-          id="question"
-          name="question"
-          type="text"
-          value={question}
-          onChange={(e) => setQuestion(e.target.value)}
-          disabled={busy}
-          placeholder="请输入问题"
-        />
-        <button type="submit" disabled={busy}>
-          {busy ? "思考中…" : "发送"}
-        </button>
-      </form>
-
-      {answer.error && (
-        <div className="error" role="alert">
-          {answer.error}
+    <div className="app">
+      {/* 侧栏 */}
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <div className="miku-icon">♪</div>
+          <div>
+            <h1 className="sidebar-title">RAG 知识库</h1>
+            <p className="sidebar-subtitle">Powered by Qwen3-8B</p>
+          </div>
         </div>
-      )}
 
-      {answer.sources.length > 0 && (
-        <section className="sources" aria-label="引用来源">
-          <h2>引用来源（{answer.sources.length}）</h2>
-          <ul>
-            {answer.sources.map((s) => {
-              const open = expanded.has(s.documentId);
-              return (
-                <li key={s.documentId} className="source-item">
+        <div className="sidebar-section">
+          <label className="sidebar-label" htmlFor="kbId">知识库 ID</label>
+          <input
+            id="kbId"
+            className="kb-input"
+            type="text"
+            value={kbId}
+            onChange={(e) => setKbId(e.target.value)}
+            disabled={busy}
+            placeholder="default"
+          />
+        </div>
+
+        <div className="sidebar-section">
+          <label className="sidebar-label">主题</label>
+          <div className="theme-switch" role="group" aria-label="主题切换">
+            {THEMES.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                className={`theme-btn${theme === t.key ? " active" : ""}`}
+                onClick={() => setTheme(t.key)}
+                aria-pressed={theme === t.key}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="sidebar-info">
+          本地大模型推理<br />
+          TS 全栈 + C++ llama.cpp<br />
+          检索命中率 100%
+        </div>
+      </aside>
+
+      {/* 主聊天区 */}
+      <main className="chat-main">
+        {/* 消息列表 */}
+        <div className="chat-messages">
+          {state.messages.length === 0 && (
+            <div className="welcome">
+              <div className="welcome-icon">♪</div>
+              <h2 className="welcome-title">向知识库提问</h2>
+              <p className="welcome-subtitle">基于本地文档的 RAG 问答 · 回答可溯源</p>
+              <div className="welcome-tips">
+                {QUICK_QUESTIONS.map((q) => (
                   <button
-                    type="button"
-                    className="source-head"
-                    onClick={() => toggleSource(s.documentId)}
-                    aria-expanded={open}
+                    key={q}
+                    className="welcome-tip"
+                    onClick={() => send(q)}
+                    disabled={busy}
                   >
-                    <span className="source-name">{s.documentName}</span>
-                    {typeof s.score === "number" && (
-                      <span className="source-score">
-                        相关度 {s.score.toFixed(2)}
-                      </span>
-                    )}
-                    <span className="source-toggle">{open ? "收起" : "展开"}</span>
+                    {q}
                   </button>
-                  {open && <pre className="source-snippet">{s.snippet}</pre>}
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
+                ))}
+              </div>
+            </div>
+          )}
 
-      {answer.text && (
-        <section className="answer" aria-label="回答">
-          <h2>回答</h2>
-          <p className="answer-text">{answer.text}</p>
-        </section>
-      )}
-    </main>
+          {state.messages.map((msg, i) => (
+            <div key={i} className={`message ${msg.role}`}>
+              <div className="msg-avatar">
+                {msg.role === "user" ? "你" : "♪"}
+              </div>
+              <div className="msg-bubble">
+                {msg.isStreaming && msg.text === "" ? (
+                  <div className="typing-indicator">
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                    <span className="typing-dot" />
+                  </div>
+                ) : (
+                  msg.text
+                )}
+              </div>
+            </div>
+          ))}
+
+          {/* 引用来源（最后一条 AI 消息的） */}
+          {showSources && !state.sourcesCollapsed && (
+            <div className="sources">
+              <button className="sources-toggle" onClick={toggleSourcesCollapse}>
+                <span className="arrow open">▸</span>
+                引用来源（{lastMessage!.sources!.length}）
+              </button>
+              <div className="sources-list">
+                {lastMessage!.sources!.map((s) => {
+                  const open = state.expanded.has(s.documentId);
+                  return (
+                    <div key={s.documentId} className="source-item">
+                      <button
+                        type="button"
+                        className="source-head"
+                        onClick={() => toggleSource(s.documentId)}
+                        aria-expanded={open}
+                      >
+                        <span className="source-name">{s.documentName}</span>
+                        {typeof s.score === "number" && (
+                          <span className="source-score">
+                            {s.score.toFixed(2)}
+                          </span>
+                        )}
+                        <span className="source-toggle">{open ? "收起" : "展开"}</span>
+                      </button>
+                      {open && <pre className="source-snippet">{s.snippet}</pre>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {showSources && state.sourcesCollapsed && (
+            <div className="sources">
+              <button className="sources-toggle" onClick={toggleSourcesCollapse}>
+                <span className="arrow">▸</span>
+                引用来源（{lastMessage!.sources!.length}）
+              </button>
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* 错误提示 */}
+        {state.error && (
+          <div className="error" role="alert" style={{ margin: "0 2rem 0.5rem" }}>
+            {state.error}
+          </div>
+        )}
+
+        {/* 底部输入栏 */}
+        <div className="chat-input-area">
+          <form className="chat-form" onSubmit={handleSubmit}>
+            <input
+              className="chat-input"
+              type="text"
+              value={question}
+              onChange={(e) => setQuestion(e.target.value)}
+              disabled={busy}
+              placeholder="向知识库提问…"
+            />
+            <button type="submit" className="send-btn" disabled={busy}>
+              {busy ? "思考中…" : "发送"}
+            </button>
+          </form>
+        </div>
+      </main>
+    </div>
   );
 }
 

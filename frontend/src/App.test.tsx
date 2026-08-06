@@ -78,7 +78,7 @@ describe("M3 流式问答页", () => {
     render(<App />);
 
     // 填表
-    fireEvent.change(screen.getByPlaceholderText(/请输入问题/), {
+    fireEvent.change(screen.getByPlaceholderText(/向知识库提问/), {
       target: { value: "你好" },
     });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
@@ -116,7 +116,7 @@ describe("M3 流式问答页", () => {
     mockFetch(stream);
 
     render(<App />);
-    fireEvent.change(screen.getByPlaceholderText(/请输入问题/), {
+    fireEvent.change(screen.getByPlaceholderText(/向知识库提问/), {
       target: { value: "测试错误" },
     });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
@@ -141,7 +141,7 @@ describe("M3 流式问答页", () => {
     mockFetch(stream);
 
     render(<App />);
-    fireEvent.change(screen.getByPlaceholderText(/请输入问题/), {
+    fireEvent.change(screen.getByPlaceholderText(/向知识库提问/), {
       target: { value: "不存在的问题" },
     });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
@@ -156,12 +156,12 @@ describe("M3 流式问答页", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<App />);
-    fireEvent.change(screen.getByPlaceholderText(/请输入问题/), {
+    fireEvent.change(screen.getByPlaceholderText(/向知识库提问/), {
       target: { value: "x" },
     });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
 
-    expect(await screen.findByText(/无法连接后端/)).toBeTruthy();
+    expect((await screen.findAllByText(/无法连接后端/)).length).toBeGreaterThan(0);
     await waitFor(() => {
       const btn = screen.getByRole("button", { name: /发送/ }) as HTMLButtonElement;
       expect(btn.disabled).toBe(false);
@@ -174,12 +174,12 @@ describe("M3 流式问答页", () => {
     mockFetch(stream, 422);
 
     render(<App />);
-    fireEvent.change(screen.getByPlaceholderText(/请输入问题/), {
+    fireEvent.change(screen.getByPlaceholderText(/向知识库提问/), {
       target: { value: "x" },
     });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
 
-    expect(await screen.findByText(/问题不能为空/)).toBeTruthy();
+    expect((await screen.findAllByText(/问题不能为空/)).length).toBeGreaterThan(0);
   });
 
   it("点击引用可展开/收起 snippet", async () => {
@@ -203,7 +203,7 @@ describe("M3 流式问答页", () => {
     mockFetch(stream);
 
     render(<App />);
-    fireEvent.change(screen.getByPlaceholderText(/请输入问题/), {
+    fireEvent.change(screen.getByPlaceholderText(/向知识库提问/), {
       target: { value: "q" },
     });
     fireEvent.click(screen.getByRole("button", { name: /发送/ }));
