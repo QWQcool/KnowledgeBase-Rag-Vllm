@@ -6,25 +6,10 @@
 
 body {
   margin: 0;
-  padding: 1.5rem;
-}
-
-.app {
-  max-width: 40rem;
-  margin: 0 auto;
+  padding: 0;
+  /* .app 的样式由 App.css 接管（铺满视口的聊天式布局），index.css 不再限制 */
 }
 
 .hint {
   color: #888;
-}
-
-.chat-form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  max-width: 32rem;
-}
-
-.chat-form input {
-  padding: 0.5rem;
 }
