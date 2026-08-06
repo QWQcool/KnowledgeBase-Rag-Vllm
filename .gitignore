@@ -22,3 +22,4 @@ data/
 
 # M4: 性能基准输出（机器/硬件特定，不入库）
 scripts/bench-result.md
+.tmp-*/
