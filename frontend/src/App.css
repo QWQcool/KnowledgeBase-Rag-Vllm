@@ -136,7 +136,9 @@ body {
 /* ---- 布局 ---- */
 .app {
   display: flex;
-  min-height: 100vh;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
   color: var(--fg);
   background: var(--bg);
   position: relative;
@@ -154,8 +156,6 @@ body {
   display: flex;
   flex-direction: column;
   gap: 0.7rem;
-  position: sticky;
-  top: 0;
   height: 100vh;
   overflow-y: auto;
   z-index: 10;
@@ -283,20 +283,21 @@ body {
 .chat-messages {
   flex: 1;
   overflow-y: auto;
-  padding: 1.5rem 2rem;
+  padding: 1.5rem 0;
   display: flex;
   flex-direction: column;
   gap: 1.25rem;
   align-items: center;
 }
 
-/* 消息区内部容器：限制最大宽度并居中（对标 llama Web UI） */
+/* 消息区内部容器：限宽居中（对标 llama Web UI） */
 .chat-messages > .message,
 .chat-messages > .sources,
 .chat-messages > .error,
 .chat-messages > .welcome {
   width: 100%;
-  max-width: 760px;
+  max-width: 800px;
+  padding: 0 1.5rem;
 }
 
 /* ---- 消息气泡 ---- */
@@ -521,7 +522,7 @@ body {
 
 /* ---- 输入区 ---- */
 .chat-input-area {
-  padding: 1rem 2rem 1.5rem;
+  padding: 1rem 1.5rem 1.5rem;
   background: var(--bg-card);
   backdrop-filter: blur(var(--glass-blur));
   -webkit-backdrop-filter: blur(var(--glass-blur));
@@ -534,7 +535,7 @@ body {
   display: flex;
   gap: 0.6rem;
   width: 100%;
-  max-width: 760px;
+  max-width: 800px;
 }
 
 .chat-input {
