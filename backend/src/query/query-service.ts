@@ -151,15 +151,28 @@ export function createQueryService(deps: QueryServiceDeps): QueryService {
         "回答时尽量引用片段原文，并在末尾按需提及出处。";
 
       try {
-        for await (const { delta } of llmProvider.stream({
+        // 首个回答 token 时间戳（TTFT 由前端算更准，这里只做透传辅助）
+        let firstTokenAt: number | null = null;
+        for await (const { delta, thinking } of llmProvider.stream({
           systemPrompt,
           contextChunks: hits.map((hit) => ({
             content: hit.chunk.content,
             source: hit.chunk.source?.title ?? hit.chunk.documentId,
           })),
           question: req.question,
+          thinking: req.thinking ?? true,
         })) {
-          yield { type: "token", delta };
+          if (thinking) {
+            // 思考过程增量 → thinking 事件
+            yield { type: "thinking", delta };
+          } else {
+            if (firstTokenAt === null) firstTokenAt = Date.now();
+            yield {
+              type: "token",
+              delta,
+              firstTokenMs: Date.now() - startedAt,
+            };
+          }
         }
         yield { type: "done", elapsedMs: Date.now() - startedAt };
       } catch (err) {

@@ -42,7 +42,8 @@ export class MockLLMProvider implements LLMProvider {
     systemPrompt: string;
     contextChunks: { content: string; source: string }[];
     question: string;
-  }): AsyncGenerator<{ delta: string }, void, unknown> {
+    thinking?: boolean;
+  }): AsyncGenerator<{ delta: string; thinking?: boolean }, void, unknown> {
     const { answer } = await this.generate(params);
     for (const ch of answer) {
       yield { delta: ch };
@@ -119,12 +120,26 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
     systemPrompt: string;
     contextChunks: { content: string; source: string }[];
     question: string;
-  }): AsyncGenerator<{ delta: string }, void, unknown> {
+    thinking?: boolean;
+  }): AsyncGenerator<{ delta: string; thinking?: boolean }, void, unknown> {
     if (!this.model) {
       throw new Error("未配置模型名：请设置 OPENAI_MODEL 环境变量");
     }
 
     const messages = this.buildMessages(params);
+
+    // 思考模式：通过 Qwen3 模板的 enable_thinking 请求级控制
+    // （llama-server 的 --reasoning 是服务端全局开关，请求级必须走 chat_template_kwargs）
+    const thinking = params.thinking ?? true;
+    const body: Record<string, unknown> = {
+      model: this.model,
+      messages,
+      temperature: 0.2,
+      stream: true,
+    };
+    if (!thinking) {
+      body.chat_template_kwargs = { enable_thinking: false };
+    }
 
     const url = `${this.baseUrl}/v1/chat/completions`;
     const headers: Record<string, string> = { "content-type": "application/json" };
@@ -135,12 +150,7 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
     const res = await fetch(url, {
       method: "POST",
       headers,
-      body: JSON.stringify({
-        model: this.model,
-        messages,
-        temperature: 0.2,
-        stream: true,
-      }),
+      body: JSON.stringify(body),
     });
     if (!res.ok || !res.body) {
       throw new Error(`LLM API 流式请求失败 ${res.status}: ${await res.text()}`);
@@ -165,11 +175,17 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
         if (payload === "") continue;
         try {
           const parsed = JSON.parse(payload) as {
-            choices?: { delta?: { content?: string } }[];
+            choices?: { delta?: { content?: string; reasoning_content?: string } }[];
           };
-          const delta = parsed.choices?.[0]?.delta?.content;
-          if (typeof delta === "string" && delta.length > 0) {
-            yield { delta };
+          const delta = parsed.choices?.[0]?.delta;
+          // 思考模式：reasoning_content 是推理过程增量，yield 时标记 thinking=true
+          const reasoning = delta?.reasoning_content;
+          if (typeof reasoning === "string" && reasoning.length > 0) {
+            yield { delta: reasoning, thinking: true };
+          }
+          const content = delta?.content;
+          if (typeof content === "string" && content.length > 0) {
+            yield { delta: content };
           }
         } catch {
           // 心跳行等非 JSON 跳过

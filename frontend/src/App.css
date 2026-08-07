@@ -792,6 +792,115 @@ body {
   color: var(--error-fg);
 }
 
+/* ---- 思考模式开关（侧栏） ---- */
+.thinking-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg-card);
+  backdrop-filter: blur(var(--glass-blur));
+  cursor: pointer;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.thinking-toggle:hover:not(:disabled) {
+  border-color: var(--accent);
+  box-shadow: 0 0 8px var(--accent-glow);
+}
+
+.thinking-toggle:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.thinking-toggle-track {
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--fg-muted);
+  opacity: 0.6;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.thinking-toggle.on .thinking-toggle-track {
+  background: var(--miku-primary);
+  opacity: 1;
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.thinking-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.2s;
+}
+
+.thinking-toggle.on .thinking-toggle-thumb {
+  transform: translateX(14px);
+}
+
+.thinking-toggle-label {
+  font-size: 0.78rem;
+  color: var(--fg);
+  flex: 1;
+}
+
+/* ---- 思考过程展示（消息气泡内） ---- */
+.thinking-box {
+  margin-bottom: 0.5rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: 0.5rem;
+  padding: 0.35rem 0.6rem;
+  background: var(--bg-soft);
+}
+
+.thinking-summary {
+  cursor: pointer;
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  user-select: none;
+}
+
+.thinking-icon {
+  font-size: 0.8rem;
+}
+
+.thinking-content {
+  margin-top: 0.3rem;
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 120px;
+  overflow-y: auto;
+  font-style: italic;
+}
+
+/* ---- 性能指标（TTFT / 总耗时） ---- */
+.msg-metrics {
+  margin-top: 0.5rem;
+  padding-top: 0.4rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  display: flex;
+  gap: 0.25rem;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
 /* ---- 侧栏链接（模型信息 / MCP） ---- */
 .side-link {
   display: flex;

@@ -110,6 +110,12 @@ export const ChatRequest = z.object({
   knowledgeBaseId: z.string().min(1),
   /** 多轮上下文（可选，最多 20 条） */
   messages: z.array(ChatMessage).max(20).optional(),
+  /**
+   * 是否开启思考模式（thinking）：true = 模型先思考再回答（流式先推 thinking 事件）；
+   * false = 直接回答（更快）。缺省 true（默认开）。
+   * 实现：转发给 llama-server 的 chat_template_kwargs.enable_thinking。
+   */
+  thinking: z.boolean().optional(),
 });
 export type ChatRequest = z.infer<typeof ChatRequest>;
 
@@ -148,10 +154,20 @@ export const SourcesEvent = z.object({
 });
 export type SourcesEvent = z.infer<typeof SourcesEvent>;
 
+/** thinking 事件：思考模式的推理过程增量（Qwen3 reasoning_content，开思考时先于 token 到达） */
+export const ThinkingEvent = z.object({
+  type: z.literal("thinking"),
+  /** 思考过程增量片段 */
+  delta: z.string(),
+});
+export type ThinkingEvent = z.infer<typeof ThinkingEvent>;
+
 /** token 事件：LLM 逐字/逐词生成的增量片段 */
 export const TokenEvent = z.object({
   type: z.literal("token"),
   delta: z.string(),
+  /** 首个回答 token 距请求开始的时间（ms），前端据此算 TTFT（首 token 延迟） */
+  firstTokenMs: z.number().int().nonnegative().optional(),
 });
 export type TokenEvent = z.infer<typeof TokenEvent>;
 
@@ -174,6 +190,7 @@ export type ErrorEvent = z.infer<typeof ErrorEvent>;
 /** 流式事件联合（判别字段 type，前端按 type 分派渲染） */
 export const StreamingEvent = z.discriminatedUnion("type", [
   SourcesEvent,
+  ThinkingEvent,
   TokenEvent,
   DoneEvent,
   ErrorEvent,

@@ -21,8 +21,14 @@ const THEMES: { key: Theme; label: string }[] = [
 interface ChatMessage {
   role: "user" | "assistant";
   text: string;
+  /** 思考过程文本（思考模式时先于 text 流式到达） */
+  thinking?: string;
   sources?: SourceRef[];
   isStreaming?: boolean;
+  /** 首 token 延迟（TTFT，ms）——前端计时，首个 token 事件时记录 */
+  ttftMs?: number | null;
+  /** 总耗时（ms）——done 事件到达时记录 */
+  elapsedMs?: number | null;
 }
 
 /** 一次对话（历史记录持久化到 localStorage） */
@@ -113,6 +119,8 @@ function App() {
   const [kbId, setKbId] = useState("default");
   const [state, setState] = useState<AnswerState>(INITIAL);
   const [theme, setTheme] = useState<Theme>("system");
+  /** 思考模式开关（true=先思考再回答，缺省开） */
+  const [thinking, setThinking] = useState(true);
   /** 历史对话列表 */
   const [conversations, setConversations] = useState<Conversation[]>(() =>
     loadConversations(),
@@ -275,10 +283,12 @@ function App() {
       abortRef.current = controller;
 
       try {
+        // 记录请求发出时刻（TTFT 计时起点）
+        const reqStart = Date.now();
         const res = await fetch(`${API_BASE}${STREAM_QUERY_PATH}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: trimmed, knowledgeBaseId: kbId }),
+          body: JSON.stringify({ question: trimmed, knowledgeBaseId: kbId, thinking }),
           signal: controller.signal,
         });
 
@@ -312,15 +322,23 @@ function App() {
         const decoder = new TextDecoder("utf-8");
         let buffer = "";
         let text = "";
+        let thinkingText = "";
         let sources: SourceRef[] = [];
         let done = false;
         let errMsg: string | null = null;
         let doneMessage: string | undefined;
+        /** 首 token 延迟（TTFT，ms）：从请求发出到第一个正式回答 token */
+        let ttft: number | null = null;
+        let elapsed: number | null = null;
 
         const flush = (ev: StreamingEvent) => {
           if (ev.type === "sources") sources = ev.sources;
-          else if (ev.type === "token") text += ev.delta;
-          else if (ev.type === "done") { done = true; doneMessage = ev.message; }
+          else if (ev.type === "thinking") thinkingText += ev.delta;
+          else if (ev.type === "token") {
+            if (ttft === null) ttft = Date.now() - reqStart;
+            text += ev.delta;
+          }
+          else if (ev.type === "done") { done = true; doneMessage = ev.message; elapsed = ev.elapsedMs ?? Date.now() - reqStart; }
           else if (ev.type === "error") { done = true; errMsg = ev.message; }
 
           setState((prev) => {
@@ -334,8 +352,11 @@ function App() {
               msgs[msgs.length - 1] = {
                 ...last,
                 text: finalText,
+                thinking: thinkingText || last.thinking,
                 sources: sources.length > 0 ? sources : last.sources,
                 isStreaming: !done,
+                ttftMs: ttft,
+                elapsedMs: elapsed,
               };
             }
             const next = { ...prev, messages: msgs, loading: !done, error: errMsg };
@@ -378,7 +399,7 @@ function App() {
         });
       }
     },
-    [kbId, activeConvId, saveActiveConversation],
+    [kbId, activeConvId, saveActiveConversation, thinking],
   );
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -480,6 +501,25 @@ function App() {
             </div>
 
             <div className="sidebar-section">
+              <label className="sidebar-label">思考模式</label>
+              <button
+                type="button"
+                className={`thinking-toggle${thinking ? " on" : ""}`}
+                onClick={() => setThinking((v) => !v)}
+                disabled={busy}
+                aria-pressed={thinking}
+                title="开启后模型先思考再回答（更慢但更严谨）；关闭后直接回答（更快）"
+              >
+                <span className="thinking-toggle-track">
+                  <span className="thinking-toggle-thumb" />
+                </span>
+                <span className="thinking-toggle-label">
+                  {thinking ? "已开启" : "已关闭"}
+                </span>
+              </button>
+            </div>
+
+            <div className="sidebar-section">
               <label className="sidebar-label">主题</label>
               <div className="theme-switch" role="group" aria-label="主题切换">
                 {THEMES.map((t) => (
@@ -536,6 +576,15 @@ function App() {
             <div key={i} className={`message ${msg.role}`}>
               <div className="msg-avatar">{msg.role === "user" ? "你" : "♪"}</div>
               <div className="msg-bubble">
+                {msg.role === "assistant" && msg.thinking ? (
+                  <details className="thinking-box" open={msg.isStreaming && !msg.text}>
+                    <summary className="thinking-summary">
+                      <span className="thinking-icon">🧠</span>
+                      {msg.isStreaming && !msg.text ? "思考中…" : "思考过程"}
+                    </summary>
+                    <div className="thinking-content">{msg.thinking}</div>
+                  </details>
+                ) : null}
                 {msg.isStreaming && msg.text === "" ? (
                   <div className="typing-indicator">
                     <span className="typing-dot" />
@@ -544,6 +593,15 @@ function App() {
                   </div>
                 ) : (
                   msg.text
+                )}
+                {/* 性能指标：TTFT + 总耗时（done 后显示） */}
+                {msg.role === "assistant" && !msg.isStreaming && msg.ttftMs !== null && msg.ttftMs !== undefined && (
+                  <div className="msg-metrics">
+                    {msg.ttftMs !== null && <>首字 {msg.ttftMs}ms</>}
+                    {msg.elapsedMs !== null && msg.elapsedMs !== undefined && (
+                      <> · 总耗 {(msg.elapsedMs / 1000).toFixed(2)}s</>
+                    )}
+                  </div>
                 )}
               </div>
             </div>

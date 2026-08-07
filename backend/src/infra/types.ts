@@ -53,7 +53,9 @@ export interface LLMProvider {
 
   /**
    * 流式生成（M3 用，POST /api/query/stream）。
-   * 返回 async generator，逐段 yield { delta }，前端 SSE 逐字渲染。
+   * 返回 async generator，逐段 yield { delta, thinking? }：
+   *   - thinking=false/缺省：正式回答增量（content），前端渲染回答文本；
+   *   - thinking=true：思考过程增量（reasoning_content），前端可单独展示。
    * 实现需保证：生成完毕后 generator 自然结束（不 yield 结束标记，
    * 结束由编排层发 done 事件）；抛异常时编排层捕获并发 error 事件。
    */
@@ -61,5 +63,7 @@ export interface LLMProvider {
     systemPrompt: string;
     contextChunks: { content: string; source: string }[];
     question: string;
-  }): AsyncGenerator<{ delta: string }, void, unknown>;
+    /** 是否开启思考模式（true=先思考再回答；缺省 true） */
+    thinking?: boolean;
+  }): AsyncGenerator<{ delta: string; thinking?: boolean }, void, unknown>;
 }
