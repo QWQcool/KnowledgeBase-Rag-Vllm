@@ -46,6 +46,45 @@ export interface ChatLogWriter {
   append(entry: ChatLogEntry): void;
 }
 
+/** 读取指定日期（YYYY-MM-DD，可选）的日志，倒序（最新在前）返回，limit 截断 */
+export function readChatLogs(
+  dir = defaultChatLogDir(),
+  options?: { date?: string; limit?: number },
+): ChatLogEntry[] {
+  const limit = options?.limit ?? 100;
+  const date = options?.date;
+  try {
+    if (!fs.existsSync(dir)) return [];
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => f.endsWith(".jsonl"))
+      .filter((f) => (date ? f.startsWith(date) : true))
+      .sort((a, b) => b.localeCompare(a)); // 最新日期在前
+    const entries: ChatLogEntry[] = [];
+    for (const file of files) {
+      const lines = fs
+        .readFileSync(path.join(dir, file), "utf8")
+        .split("\n")
+        .filter((l) => l.trim().length > 0);
+      for (const line of lines) {
+        try {
+          entries.push(JSON.parse(line) as ChatLogEntry);
+        } catch {
+          // 跳过损坏行（如写入中途崩溃的残行）
+        }
+      }
+      if (entries.length >= limit) break;
+    }
+    // 跨文件按 ts 倒序
+    return entries
+      .sort((a, b) => (a.ts < b.ts ? 1 : -1))
+      .slice(0, limit);
+  } catch (err) {
+    console.warn(`[chat-log] 读取失败：${err instanceof Error ? err.message : String(err)}`);
+    return [];
+  }
+}
+
 /** 不落盘：测试环境默认用，避免测试写脏磁盘 */
 export const noopChatLogWriter: ChatLogWriter = {
   append() {},

@@ -7,7 +7,6 @@ import {
   ChatResponse,
   Document,
   HealthStatus,
-  KnowledgeBase,
   STREAM_QUERY_PATH,
   ok,
 } from "@rag/shared";
@@ -44,6 +43,8 @@ export interface AppHandlers {
   ingest: (c: any) => Promise<Response>;
   listDocuments: (c: any) => Promise<Response>;
   retrieve: (c: any) => Promise<Response>;
+  listChatLogs: (c: any) => Promise<Response>;
+  listKnowledgeBases: (c: any) => Promise<Response>;
 }
 
 /** 缺省检索实现：Retrieval Agent 交付前返回空命中（不造假检索结果） */
@@ -79,8 +80,8 @@ export function createApp(deps?: Partial<AppDeps>) {
   // GET /api/documents —— 文档列表（暂空）
   app.get(`${API_PREFIX}/documents`, (c) => c.json<Document[]>([]));
 
-  // GET /api/knowledge-bases —— 知识库列表（暂空）
-  app.get(`${API_PREFIX}/knowledge-bases`, (c) => c.json<KnowledgeBase[]>([]));
+  // GET /api/knowledge-bases 由生产 handler 提供真实列表（bootstrap mount 时覆盖）；
+  // 此处不再注册占位，避免先注册的 [] 遮蔽真实数据。
 
   // POST /api/chat —— 未实现，明确返回 501 而非 404/误导性数据
   app.post(`${API_PREFIX}/chat`, (c) =>

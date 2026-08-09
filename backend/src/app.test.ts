@@ -37,12 +37,11 @@ describe("M1 空端点占位", () => {
     expect(await res.json()).toEqual([]);
   });
 
-  it("GET /api/knowledge-bases 返回空数组", async () => {
+  it("GET /api/knowledge-bases：未挂生产 handler 时返回 404（占位已移除，真实数据由 bootstrap 提供）", async () => {
     const app = createApp();
     const res = await app.request("/api/knowledge-bases");
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
+    expect(res.status).toBe(404);
   });
 
   it("POST /api/chat 返回 501（未实现）", async () => {
@@ -110,6 +109,8 @@ describe("POST /api/retrieve（MCP server 调用的纯检索端点）", () => {
         const result = await retrieveService.retrieve(parsed.data);
         return c.json(RetrieveResponse.parse(result), 200);
       },
+      listChatLogs: async () => new Response('{"total":0,"entries":[]}', { status: 200 }),
+      listKnowledgeBases: async () => new Response("[]", { status: 200 }),
     });
 
     const res = await app.request("/api/retrieve", {
@@ -139,6 +140,8 @@ describe("POST /api/retrieve（MCP server 调用的纯检索端点）", () => {
         if (!parsed.success) return c.json({ error: "非法请求体" }, 422);
         return c.json(RetrieveResponse.parse({ hits: [] }), 200);
       },
+      listChatLogs: async () => new Response('{"total":0,"entries":[]}', { status: 200 }),
+      listKnowledgeBases: async () => new Response("[]", { status: 200 }),
     });
 
     const res = await app.request("/api/retrieve", {

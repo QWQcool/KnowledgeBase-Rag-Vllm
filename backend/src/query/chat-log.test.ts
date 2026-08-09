@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach } from "vitest";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { FileChatLogWriter, noopChatLogWriter, type ChatLogEntry } from "./chat-log";
+import { FileChatLogWriter, noopChatLogWriter, readChatLogs, type ChatLogEntry } from "./chat-log";
 
 let tmpDir: string;
 
@@ -74,6 +74,30 @@ describe("FileChatLogWriter", () => {
 
   it("noopChatLogWriter 不抛错", () => {
     expect(() => noopChatLogWriter.append(baseEntry)).not.toThrow();
+  });
+
+  it("readChatLogs：倒序返回、按日期过滤、limit 截断", async () => {
+    tmpDir = await mkdtemp(path.join(os.tmpdir(), "chatlog-test-"));
+    const writer = new FileChatLogWriter({ dir: tmpDir });
+
+    writer.append({ ...baseEntry, ts: "2026-08-09T23:00:00.000Z", question: "Q-day1" });
+    writer.append({ ...baseEntry, ts: "2026-08-10T00:00:00.000Z", question: "Q-early" });
+    writer.append({ ...baseEntry, ts: "2026-08-10T01:00:00.000Z", question: "Q-late" });
+
+    // 全部：倒序（最新在前）
+    const all = readChatLogs(tmpDir);
+    expect(all.map((e) => e.question)).toEqual(["Q-late", "Q-early", "Q-day1"]);
+
+    // 按日期过滤
+    const d10 = readChatLogs(tmpDir, { date: "2026-08-10" });
+    expect(d10.map((e) => e.question)).toEqual(["Q-late", "Q-early"]);
+
+    // limit 截断
+    const limited = readChatLogs(tmpDir, { limit: 2 });
+    expect(limited.map((e) => e.question)).toEqual(["Q-late", "Q-early"]);
+
+    // 目录不存在 → 空数组不抛错
+    expect(readChatLogs(path.join(tmpDir, "nope"))).toEqual([]);
   });
 });
 

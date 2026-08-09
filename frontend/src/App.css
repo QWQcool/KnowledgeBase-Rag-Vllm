@@ -288,6 +288,117 @@ body {
   background: var(--err-soft, rgba(240, 100, 100, 0.12));
 }
 
+/* ---- 多知识库切换 ---- */
+.kb-back-btn {
+  align-self: flex-start;
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.15rem 0;
+}
+
+.kb-back-btn:hover {
+  color: var(--accent);
+}
+
+/* ---- 对话日志弹窗 ---- */
+.modal-card-logs {
+  max-width: 640px;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-card-logs .modal-body {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.log-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.log-item {
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.55rem 0.7rem;
+  background: var(--bg-input);
+}
+
+.log-item-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.log-time {
+  font-size: 0.72rem;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.log-kb {
+  font-size: 0.72rem;
+  color: var(--accent);
+}
+
+.log-badge {
+  font-size: 0.65rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.35rem;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.log-badge.err {
+  background: var(--err-soft, rgba(240, 100, 100, 0.15));
+  color: var(--err);
+}
+
+.log-cost {
+  margin-left: auto;
+  font-size: 0.7rem;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.log-question {
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-top: 0.35rem;
+}
+
+.log-answer {
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  line-height: 1.45;
+  margin-top: 0.25rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.log-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin-top: 0.35rem;
+}
+
+.log-source {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.35rem;
+  background: var(--bg-elevated, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border);
+  color: var(--fg-muted);
+}
+
 .theme-switch {
   display: flex;
   gap: 0.25rem;

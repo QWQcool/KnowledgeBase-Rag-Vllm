@@ -28,12 +28,25 @@ function fakeReadableStream(chunks: string[]): ReadableStream<Uint8Array> {
 
 /** 构造 fetch 的 mock：返回带 body 的 Response */
 function mockFetch(body: ReadableStream<Uint8Array>, status = 200) {
-  const fetchMock = vi.fn().mockResolvedValue({
-    ok: status >= 200 && status < 300,
-    status,
-    body,
-    json: async () => ({}),
-    text: async () => "",
+  const fetchMock = vi.fn().mockImplementation((url: string) => {
+    // 启动时的知识库列表请求：返回空列表
+    if (typeof url === "string" && url.includes("/api/knowledge-bases")) {
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: async () => [],
+        body: null,
+        text: async () => "[]",
+      });
+    }
+    // 其余请求（流式问答/上传等）：返回调用方给的 body
+    return Promise.resolve({
+      ok: status >= 200 && status < 300,
+      status,
+      body,
+      json: async () => ({}),
+      text: async () => "",
+    });
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
@@ -96,9 +109,11 @@ describe("M3 流式问答页", () => {
     expect(screen.queryByText(/无法连接后端/)).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
 
-    // 发送时已发出 POST 到流式端点
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0];
+    // 发送时已发出 POST 到流式端点（另有一次启动时的 knowledge-bases 请求）
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const streamCall = fetchMock.mock.calls.find(([u]) => String(u).includes("/api/query/stream"));
+    expect(streamCall).toBeTruthy();
+    const [url, init] = streamCall!;
     expect(url).toMatch(/\/api\/query\/stream$/);
     expect(init?.method).toBe("POST");
     const body = JSON.parse(init?.body as string);
@@ -224,8 +239,26 @@ describe("M3 流式问答页", () => {
 });
 
 describe("文档上传", () => {
+  /** 可感知 knowledge-bases 启动请求的 fetch mock（上传测试用） */
+  function mockDispatchFetch(handler: (url: string, init?: RequestInit) => unknown) {
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (typeof url === "string" && url.includes("/api/knowledge-bases")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [],
+          body: null,
+          text: async () => "[]",
+        });
+      }
+      return Promise.resolve(handler(url, init));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
   it("选择 .md 文件 → POST /api/ingest → 展示分块数", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
+    const fetchMock = mockDispatchFetch(() => ({
       ok: true,
       status: 201,
       json: async () => ({
@@ -233,8 +266,7 @@ describe("文档上传", () => {
         chunkCount: 3,
         chunks: [],
       }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    }));
 
     render(<App />);
     const input = screen.getByLabelText("选择文档上传");
@@ -243,8 +275,10 @@ describe("文档上传", () => {
 
     expect(await screen.findByText(/已入库/)).toBeTruthy();
     expect(screen.getByText(/3 个分块/)).toBeTruthy();
-    // 请求体带 filename/content/knowledgeBaseId
-    const [url, init] = fetchMock.mock.calls[0];
+    // 请求体带 filename/content/knowledgeBaseId（跳过启动时的 knowledge-bases 调用）
+    const ingestCall = fetchMock.mock.calls.find(([url]) => String(url).includes("/api/ingest"));
+    expect(ingestCall).toBeTruthy();
+    const [url, init] = ingestCall!;
     expect(url).toMatch(/\/api\/ingest$/);
     const body = JSON.parse(init?.body as string);
     expect(body.filename).toBe("guide.md");
@@ -253,8 +287,9 @@ describe("文档上传", () => {
   });
 
   it("不支持的文件类型（.exe）提示且不发请求", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = mockDispatchFetch(() => {
+      throw new Error("不应调用");
+    });
 
     render(<App />);
     const input = screen.getByLabelText("选择文档上传");
@@ -262,16 +297,16 @@ describe("文档上传", () => {
     fireEvent.change(input, { target: { files: [file] } });
 
     expect(await screen.findByText(/不支持 .exe/)).toBeTruthy();
-    expect(fetchMock).not.toHaveBeenCalled();
+    const ingestCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/ingest"));
+    expect(ingestCalls).toHaveLength(0);
   });
 
   it("上传失败（500）展示错误信息", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
+    const fetchMock = mockDispatchFetch(() => ({
       ok: false,
       status: 500,
       json: async () => ({ error: "服务器内部错误" }),
-    });
-    vi.stubGlobal("fetch", fetchMock);
+    }));
 
     render(<App />);
     const input = screen.getByLabelText("选择文档上传");
@@ -279,5 +314,71 @@ describe("文档上传", () => {
     fireEvent.change(input, { target: { files: [file] } });
 
     expect(await screen.findByText(/上传失败 \(500\)/)).toBeTruthy();
+  });
+});
+
+describe("对话日志面板", () => {
+  it("点击「对话日志」→ GET /api/chat-logs → 渲染日志条目", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("/api/knowledge-bases")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => [], body: null });
+      }
+      if (String(url).includes("/api/chat-logs")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            total: 1,
+            entries: [
+              {
+                ts: "2026-08-10T00:00:00.000Z",
+                question: "什么是RAG？",
+                knowledgeBaseId: "default",
+                sources: [{ documentId: "d1", documentName: "手册.md", score: 0.92 }],
+                answer: "RAG 是检索增强生成…",
+                fallbackNoHits: false,
+                elapsedMs: 1234,
+              },
+            ],
+          }),
+          body: null,
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}), body: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    fireEvent.click(screen.getByRole("button", { name: /对话日志/ }));
+
+    expect(await screen.findByText("什么是RAG？")).toBeTruthy();
+    expect(screen.getByText(/手册\.md/)).toBeTruthy();
+    expect(screen.getByText(/1234ms/)).toBeTruthy();
+  });
+});
+
+describe("多知识库下拉", () => {
+  it("启动加载知识库列表 → 下拉可选已知库与自定义", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (String(url).includes("/api/knowledge-bases")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => [{ id: "default", name: "default", documentIds: [] }],
+          body: null,
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}), body: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+
+    // 等待下拉出现（选项 default + 自定义）
+    const select = await screen.findByRole("combobox");
+    expect(select).toBeTruthy();
+    const options = screen.getAllByRole("option").map((o) => o.textContent);
+    expect(options).toContain("default");
+    expect(options).toContain("自定义…");
   });
 });

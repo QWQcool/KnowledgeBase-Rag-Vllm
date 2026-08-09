@@ -1,0 +1,38 @@
+{
+  "description": "RAG 检索质量评估测试集（面试数字可复现）——跑之前先确认 default 库已 ingest 对应文档",
+  "knowledgeBaseId": "default",
+  "topK": 5,
+  "minScore": 0.8,
+  "cases": [
+    {
+      "question": "什么是RAG？它结合了哪两个组件？",
+      "expectKeywords": ["RAG", "检索", "生成"],
+      "expectHit": true,
+      "note": "相关：RAG 原理中/英文文档均应命中"
+    },
+    {
+      "question": "检索器和生成器分别负责什么？",
+      "expectKeywords": ["检索器", "生成器"],
+      "expectHit": true,
+      "note": "相关：RAG 中文速查文档"
+    },
+    {
+      "question": "写一首关于宇宙飞船的短诗",
+      "expectKeywords": ["RAG", "检索"],
+      "expectHit": false,
+      "note": "弱相关：允许通识回答，评估只看检索层——宇宙飞船与 RAG 文档相关度低（0.80~0.81 边缘），阈值 0.80 时可能命中"
+    },
+    {
+      "question": "量子纠缠和深度学习有什么关系？",
+      "expectKeywords": [],
+      "expectHit": false,
+      "note": "无关（实测 2026-08-10）：0.851 误报——「深度学习」与库内 Qwen3 英文文档语义串扰，0.85 阈值也挡不住，属 embedding 层面问题，需混合检索/重排解决（面试素材）"
+    },
+    {
+      "question": "番茄炒蛋的家常做法",
+      "expectKeywords": [],
+      "expectHit": false,
+      "note": "无关：生活常识，库中无内容"
+    }
+  ]
+}

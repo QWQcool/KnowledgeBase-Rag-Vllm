@@ -54,7 +54,26 @@ interface ModelInfo {
 
 /** 对话框（弹窗）打开状态 */
 interface ModalState {
-  type: "model" | "mcp" | null;
+  type: "model" | "mcp" | "logs" | null;
+}
+
+/** 对话日志条目（与后端 ChatLogEntry 契约对齐，字段取展示所需子集） */
+interface ChatLogItem {
+  ts: string;
+  question: string;
+  knowledgeBaseId: string;
+  sources: { documentId: string; documentName: string; score: number }[];
+  answer?: string;
+  fallbackNoHits?: boolean;
+  elapsedMs: number;
+  error?: string;
+}
+
+/** 知识库下拉项（与后端 /api/knowledge-bases 契约对齐） */
+interface KnowledgeBaseItem {
+  id: string;
+  name: string;
+  documentIds?: string[];
 }
 
 interface AnswerState {
@@ -139,6 +158,12 @@ function App() {
   } | null>(null);
   /** 弹窗加载态 */
   const [modalLoading, setModalLoading] = useState(false);
+  /** 对话日志数据 */
+  const [chatLogs, setChatLogs] = useState<ChatLogItem[]>([]);
+  /** 知识库列表（下拉用） */
+  const [kbList, setKbList] = useState<KnowledgeBaseItem[]>([]);
+  /** kbId 输入是否为"自定义"模式（不在已知列表里） */
+  const [kbCustom, setKbCustom] = useState(false);
   /** 文档上传：文件名 / 上传中 / 最近结果 */
   const [uploadFileName, setUploadFileName] = useState("");
   const [uploading, setUploading] = useState(false);
@@ -155,6 +180,28 @@ function App() {
   useEffect(() => {
     document.documentElement.setAttribute("data-theme", theme);
   }, [theme]);
+
+  /** 启动时拉取知识库列表（多知识库切换）；失败静默（不影响主流程） */
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/knowledge-bases`);
+        const list: KnowledgeBaseItem[] = res.ok ? await res.json() : [];
+        if (!cancelled) {
+          setKbList(list);
+          // 当前 kbId 若在已知列表里 → 非自定义；否则保持自定义输入
+          setKbCustom(list.length > 0 && !list.some((k) => k.id === kbId));
+        }
+      } catch {
+        // 后端不可达/测试环境 mock 未返回 → 静默保持文本框模式
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /** 自动滚动到底部（jsdom 无 scrollIntoView，加守卫） */
   const scrollToBottom = useCallback(() => {
@@ -331,6 +378,39 @@ function App() {
       setModalLoading(false);
     }
   }, []);
+
+  /** 打开对话日志面板（GET /api/chat-logs） */
+  const openLogsPanel = useCallback(async () => {
+    setModal({ type: "logs" });
+    setModalLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/chat-logs?limit=100`);
+      if (res.ok) {
+        const data = (await res.json()) as { entries: ChatLogItem[] };
+        setChatLogs(data.entries ?? []);
+      } else {
+        setChatLogs([]);
+      }
+    } catch {
+      setChatLogs([]);
+    } finally {
+      setModalLoading(false);
+    }
+  }, []);
+
+  /** 知识库下拉选择：选已知库或进入自定义输入 */
+  const handleKbSelect = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      const v = e.target.value;
+      if (v === "__custom__") {
+        setKbCustom(true);
+      } else {
+        setKbCustom(false);
+        setKbId(v);
+      }
+    },
+    [],
+  );
 
   const send = useCallback(
     async (q: string) => {
@@ -567,15 +647,40 @@ function App() {
 
             <div className="sidebar-section">
               <label className="sidebar-label">知识库 ID</label>
-              <input
-                id="kbId"
-                className="kb-input"
-                type="text"
-                value={kbId}
-                onChange={(e) => setKbId(e.target.value)}
-                disabled={busy}
-                placeholder="default"
-              />
+              {kbList.length > 0 && !kbCustom ? (
+                <select
+                  className="kb-input"
+                  value={kbList.some((k) => k.id === kbId) ? kbId : ""}
+                  onChange={handleKbSelect}
+                  disabled={busy}
+                >
+                  {kbList.map((k) => (
+                    <option key={k.id} value={k.id}>
+                      {k.name}
+                    </option>
+                  ))}
+                  <option value="__custom__">自定义…</option>
+                </select>
+              ) : (
+                <input
+                  id="kbId"
+                  className="kb-input"
+                  type="text"
+                  value={kbId}
+                  onChange={(e) => setKbId(e.target.value)}
+                  disabled={busy}
+                  placeholder="default"
+                />
+              )}
+              {kbCustom && (
+                <button
+                  type="button"
+                  className="kb-back-btn"
+                  onClick={() => setKbCustom(false)}
+                >
+                  ← 返回选择已知知识库
+                </button>
+              )}
             </div>
 
             {/* 文档上传（md/txt/pdf → /api/ingest 入库） */}
@@ -648,7 +753,7 @@ function App() {
               </div>
             </div>
 
-            {/* 模型信息 + MCP 入口 */}
+            {/* 模型信息 + MCP + 对话日志入口 */}
             <div className="sidebar-section">
               <label className="sidebar-label">系统</label>
               <button className="side-link" onClick={openModelInfo}>
@@ -656,6 +761,9 @@ function App() {
               </button>
               <button className="side-link" onClick={openMcpPanel}>
                 <span className="side-link-icon">⇄</span> MCP 服务器
+              </button>
+              <button className="side-link" onClick={openLogsPanel}>
+                <span className="side-link-icon">☰</span> 对话日志
               </button>
             </div>
 
@@ -864,6 +972,54 @@ function App() {
                 ))
               ) : (
                 <div className="modal-error">无法获取 MCP 工具列表</div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 对话日志弹窗 */}
+      {modal.type === "logs" && (
+        <div className="modal-overlay" onClick={closeModal}>
+          <div className="modal-card modal-card-logs" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>对话日志（本地）</h3>
+              <button className="modal-close" onClick={closeModal}>×</button>
+            </div>
+            <div className="modal-body">
+              {modalLoading ? (
+                <div className="typing-indicator">
+                  <span className="typing-dot" /><span className="typing-dot" /><span className="typing-dot" />
+                </div>
+              ) : chatLogs.length > 0 ? (
+                <div className="log-list">
+                  {chatLogs.map((log, i) => (
+                    <div key={`${log.ts}-${i}`} className="log-item">
+                      <div className="log-item-head">
+                        <span className="log-time">
+                          {new Date(log.ts).toLocaleString("zh-CN", { hour12: false })}
+                        </span>
+                        <span className="log-kb">[{log.knowledgeBaseId}]</span>
+                        {log.fallbackNoHits && <span className="log-badge">通识兜底</span>}
+                        {log.error && <span className="log-badge err">出错</span>}
+                        <span className="log-cost">{log.elapsedMs}ms</span>
+                      </div>
+                      <div className="log-question">{log.question}</div>
+                      <div className="log-answer">{log.answer?.slice(0, 200) ?? log.error}</div>
+                      {log.sources.length > 0 && (
+                        <div className="log-sources">
+                          {log.sources.map((s, j) => (
+                            <span key={j} className="log-source">
+                              {s.documentName} {s.score.toFixed(2)}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="modal-error">暂无对话日志（发起问答后自动记录到 data/chat-logs/）</div>
               )}
             </div>
           </div>

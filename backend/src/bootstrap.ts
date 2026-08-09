@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import {
   API_PREFIX,
   IngestRequest,
@@ -14,7 +15,7 @@ import { TriviumDBStore } from "./infra/triviumdb-store";
 import { IngestService } from "./ingest/ingest-service";
 import { RetrieveService } from "./retrieval/retrieve-service";
 import { createLLMProvider } from "./query/llm-provider";
-import { FileChatLogWriter } from "./query/chat-log";
+import { FileChatLogWriter, readChatLogs } from "./query/chat-log";
 
 /**
  * bootstrap.ts —— 生产依赖组装（编排层）
@@ -130,6 +131,36 @@ export function createProductionDeps(
       const result: RetrieveResponse = await retrieveService.retrieve(parsed.data);
       return c.json(RetrieveResponse.parse(result), 200);
     },
+    async listChatLogs(c) {
+      // 对话日志查看入口：GET /api/chat-logs?date=YYYY-MM-DD&limit=N
+      const date = c.req.query("date") ?? undefined;
+      const limitRaw = Number(c.req.query("limit") ?? 100);
+      const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 500) : 100;
+      const entries = readChatLogs(undefined, { date, limit });
+      return c.json({ total: entries.length, entries });
+    },
+    async listKnowledgeBases(c) {
+      // 多知识库：扫描 data/trivium/ 下 *.tdb.* 文件（TriviumDB 实际落盘为 .tdb.wal/.tdb.lock）
+      // 反推库 id（default→default.tdb.*）。smoke 是测试残留，过滤掉。
+      const dir = path.resolve(process.cwd(), "data", "trivium");
+      const kbs: { id: string; name: string; documentIds: string[] }[] = [];
+      const seen = new Set<string>();
+      try {
+        if (fs.existsSync(dir)) {
+          for (const f of fs.readdirSync(dir)) {
+            const m = f.match(/^(.+)\.tdb\./);
+            if (!m || seen.has(m[1])) continue;
+            const id = m[1];
+            if (id === "smoke") continue; // vitest 测试库，非用户数据
+            seen.add(id);
+            kbs.push({ id, name: id, documentIds: [] });
+          }
+        }
+      } catch (err) {
+        console.warn(`[bootstrap] 扫描知识库失败：${err instanceof Error ? err.message : String(err)}`);
+      }
+      return c.json(kbs);
+    },
   };
 
   return { deps: { retrieveService, llmProvider, chatLog }, handlers };
@@ -140,4 +171,6 @@ export function mountProductionHandlers(app: Hono, handlers: AppHandlers) {
   app.post(`${API_PREFIX}/ingest`, handlers.ingest);
   app.get(`${API_PREFIX}/documents`, handlers.listDocuments);
   app.post(`${API_PREFIX}/retrieve`, handlers.retrieve);
+  app.get(`${API_PREFIX}/chat-logs`, handlers.listChatLogs);
+  app.get(`${API_PREFIX}/knowledge-bases`, handlers.listKnowledgeBases);
 }
