@@ -22,8 +22,13 @@ REM 原因：llama.cpp 在加载从 Ollama 抽出的 Qwen3-8B GGUF 时会卡死�
 REM       故 M4 改由 Ollama 直接服务 Qwen3-8B-Instruct。
 REM 模型权重：ollama pull qwen3:8b（约 5.2GB，Q4_K_M）。
 REM Embedding：默认用 Transformers.js 自动下载 multilingual-e5-small（首次联网）。
-REM   若你已把模型缓存到本地目录，可在运行本脚本前设环境变量：
-REM   set RAG_EMBEDDING_MODEL=<你的本地模型目录 或 HF 模型名>
+REM   薄膜逻辑（见下方「Embedding 模型路径薄膜」），无需手动 set：
+REM     - 你已设 RAG_EMBEDDING_MODEL       → 直接继承，不做任何覆盖
+REM     - 否则本机有本地缓存（RAG_EMBEDDING_LOCAL_CACHE，默认 C:\models\e5-small）
+REM                                       → 自动指向，本机零配置
+REM     - 都没有                          → 保持未定义，backend 自动下载（需联网）
+REM   注：C:\models\e5-small 仅作「本机本地缓存默认路径」，可用
+REM       RAG_EMBEDDING_LOCAL_CACHE 覆盖；克隆到别的机器若无此目录会优雅回退自动下载。
 
 REM ======== Step 1: 启动 Ollama（若未运行）========
 echo [1/3] Starting Ollama (LLM inference via OpenAI-compatible API)...
@@ -39,6 +44,19 @@ if %errorlevel%==0 (
 echo   - 等待 Ollama 拉起模型（首次约需 10s）...
 timeout /t 8 >nul
 
+REM ======== Embedding 模型路径薄膜（有则继承，无则本地默认/自动下载）========
+if defined RAG_EMBEDDING_MODEL (
+    echo   - 沿用已设置的 RAG_EMBEDDING_MODEL=%RAG_EMBEDDING_MODEL%
+) else (
+    if not defined RAG_EMBEDDING_LOCAL_CACHE set "RAG_EMBEDDING_LOCAL_CACHE=C:\models\e5-small"
+    if exist "%RAG_EMBEDDING_LOCAL_CACHE%" (
+        set "RAG_EMBEDDING_MODEL=%RAG_EMBEDDING_LOCAL_CACHE%"
+        echo   - 已自动指向本地 embedding 缓存：%RAG_EMBEDDING_MODEL%
+    ) else (
+        echo   - 未设 RAG_EMBEDDING_MODEL 且无本地缓存，backend 将自动下载 multilingual-e5-small
+    )
+)
+
 REM ======== Step 2: 启动后端（Hono + RAG 流水线）========
 echo [2/3] Starting backend (Hono + RAG pipeline)...
 netstat -ano | findstr ":%BACKEND_PORT%" | findstr "LISTENING" >nul 2>&1
@@ -46,7 +64,7 @@ if %errorlevel%==0 (
     echo   - Port %BACKEND_PORT% already in use, skip.
 ) else (
     start "rag-backend" cmd /k "cd /d %ROOT%backend && set LLM_PROVIDER=openai&& set OPENAI_BASE_URL=http://127.0.0.1:%OLLAMA_PORT%/v1&& set OPENAI_MODEL=qwen3:8b&& set OPENAI_API_KEY=ollama&& set RAG_EMBEDDING=transformers&& set PORT=%BACKEND_PORT%&& npm run start"
-    echo   - Backend launching in new window...
+    echo   - Backend launching in new window... (RAG_EMBEDDING_MODEL 由父环境继承：薄膜已设或留空用默认)
 )
 
 REM ======== Step 3: 启动前端（Vite）========
