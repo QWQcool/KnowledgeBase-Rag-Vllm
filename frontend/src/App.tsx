@@ -139,6 +139,15 @@ function App() {
   } | null>(null);
   /** 弹窗加载态 */
   const [modalLoading, setModalLoading] = useState(false);
+  /** 文档上传：文件名 / 上传中 / 最近结果 */
+  const [uploadFileName, setUploadFileName] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<{
+    ok: boolean;
+    text: string;
+  } | null>(null);
+  /** 拖拽高亮 */
+  const [dragOver, setDragOver] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -217,6 +226,75 @@ function App() {
       setActiveConvId(null);
     }
   }, [activeConvId]);
+
+  /** 上传文档到知识库（md/txt/pdf，经 /api/ingest 入库） */
+  const uploadDocument = useCallback(
+    async (file: File) => {
+      const ext = file.name.split(".").pop()?.toLowerCase() ?? "";
+      if (!["md", "txt", "pdf"].includes(ext)) {
+        setUploadResult({
+          ok: false,
+          text: `不支持 .${ext}，仅支持 md / txt / pdf`,
+        });
+        return;
+      }
+      setUploadFileName(file.name);
+      setUploading(true);
+      setUploadResult(null);
+      try {
+        // 统一用 latin1 字符串承载内容：与后端 Buffer.from(content, "latin1")
+        // 完全对齐（md/txt 的 ASCII/UTF-8 文本在 latin1 下字节不变，PDF 二进制可无损还原）
+        const buf = await file.arrayBuffer();
+        const content = new TextDecoder("latin1").decode(buf);
+        const res = await fetch(`${API_BASE}/api/ingest`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ filename: file.name, content, knowledgeBaseId: kbId }),
+        });
+        const body = await res.json().catch(() => null);
+        if (!res.ok) {
+          const issues = body?.issues?.map((i: { message: string }) => i.message).join("; ");
+          setUploadResult({ ok: false, text: `上传失败 (${res.status})${issues ? `：${issues}` : ""}` });
+          return;
+        }
+        const chunkCount = body?.chunkCount ?? body?.chunks?.length ?? 0;
+        const title = body?.document?.title ?? file.name;
+        setUploadResult({
+          ok: true,
+          text: `「${title}」已入库 ✓（${chunkCount} 个分块，知识库 ${kbId}）`,
+        });
+      } catch (err) {
+        setUploadResult({
+          ok: false,
+          text: `上传出错：${err instanceof Error ? err.message : String(err)}`,
+        });
+      } finally {
+        setUploading(false);
+      }
+    },
+    [kbId],
+  );
+
+  /** 文件选择框 change 处理 */
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (file) void uploadDocument(file);
+      e.target.value = ""; // 允许重复选择同一文件
+    },
+    [uploadDocument],
+  );
+
+  /** 拖拽上传 */
+  const handleDrop = useCallback(
+    (e: React.DragEvent<HTMLElement>) => {
+      e.preventDefault();
+      setDragOver(false);
+      const file = e.dataTransfer.files?.[0];
+      if (file) void uploadDocument(file);
+    },
+    [uploadDocument],
+  );
 
   /** 加载模型信息（点击模型名触发） */
   const openModelInfo = useCallback(async () => {
@@ -498,6 +576,40 @@ function App() {
                 disabled={busy}
                 placeholder="default"
               />
+            </div>
+
+            {/* 文档上传（md/txt/pdf → /api/ingest 入库） */}
+            <div className="sidebar-section">
+              <label className="sidebar-label">上传文档</label>
+              <label
+                className={`upload-drop${dragOver ? " drag-over" : ""}${uploading ? " uploading" : ""}`}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragOver(true);
+                }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleDrop}
+              >
+                <input
+                  type="file"
+                  accept=".md,.txt,.pdf"
+                  onChange={handleFileChange}
+                  disabled={uploading}
+                  style={{ display: "none" }}
+                  aria-label="选择文档上传"
+                />
+                <span className="upload-icon">{uploading ? "⏳" : "⇪"}</span>
+                <span className="upload-hint">
+                  {uploading
+                    ? `上传中：${uploadFileName}…`
+                    : "点击或拖拽文件（md/txt/pdf）"}
+                </span>
+              </label>
+              {uploadResult && (
+                <div className={`upload-result${uploadResult.ok ? " ok" : " fail"}`}>
+                  {uploadResult.text}
+                </div>
+              )}
             </div>
 
             <div className="sidebar-section">

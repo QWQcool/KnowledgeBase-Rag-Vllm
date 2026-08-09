@@ -228,6 +228,66 @@ body {
   box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
+/* ---- 文档上传（侧栏）---- */
+.upload-drop {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.7rem;
+  border: 1.5px dashed var(--border-strong);
+  border-radius: 0.5rem;
+  cursor: pointer;
+  background: var(--bg-input);
+  transition: border-color 0.2s, background 0.2s, transform 0.1s;
+  user-select: none;
+}
+
+.upload-drop:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.upload-drop.drag-over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: scale(1.02);
+}
+
+.upload-drop.uploading {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.upload-icon {
+  font-size: 1rem;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.upload-hint {
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  line-height: 1.35;
+}
+
+.upload-result {
+  font-size: 0.75rem;
+  line-height: 1.4;
+  padding: 0.45rem 0.6rem;
+  border-radius: 0.45rem;
+  word-break: break-all;
+}
+
+.upload-result.ok {
+  color: var(--ok);
+  background: var(--ok-soft, rgba(80, 200, 120, 0.12));
+}
+
+.upload-result.fail {
+  color: var(--err);
+  background: var(--err-soft, rgba(240, 100, 100, 0.12));
+}
+
 .theme-switch {
   display: flex;
   gap: 0.25rem;

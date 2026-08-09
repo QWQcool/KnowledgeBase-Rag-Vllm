@@ -222,3 +222,62 @@ describe("M3 流式问答页", () => {
     expect(screen.queryByText("这是原始片段内容")).toBeNull();
   });
 });
+
+describe("文档上传", () => {
+  it("选择 .md 文件 → POST /api/ingest → 展示分块数", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        document: { title: "测试指南", filename: "guide.md" },
+        chunkCount: 3,
+        chunks: [],
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    const input = screen.getByLabelText("选择文档上传");
+    const file = new File(["# 测试\n内容"], "guide.md", { type: "text/markdown" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText(/已入库/)).toBeTruthy();
+    expect(screen.getByText(/3 个分块/)).toBeTruthy();
+    // 请求体带 filename/content/knowledgeBaseId
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toMatch(/\/api\/ingest$/);
+    const body = JSON.parse(init?.body as string);
+    expect(body.filename).toBe("guide.md");
+    expect(body.knowledgeBaseId).toBe("default");
+    expect(typeof body.content).toBe("string");
+  });
+
+  it("不支持的文件类型（.exe）提示且不发请求", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    const input = screen.getByLabelText("选择文档上传");
+    const file = new File(["x"], "run.exe", { type: "application/octet-stream" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText(/不支持 .exe/)).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("上传失败（500）展示错误信息", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: "服务器内部错误" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<App />);
+    const input = screen.getByLabelText("选择文档上传");
+    const file = new File(["data"], "doc.txt", { type: "text/plain" });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(await screen.findByText(/上传失败 \(500\)/)).toBeTruthy();
+  });
+});
