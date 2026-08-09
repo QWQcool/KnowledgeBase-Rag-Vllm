@@ -96,28 +96,32 @@ cd frontend; npm run dev  # 浏览器开 http://localhost:5173
 
 M4 的核心：把后端的 LLM 生成从 Mock 切到本机真大模型，**TS 后端零代码改动**（Adapter 模式回报：`OpenAICompatibleLLMProvider` 早已预留 llama-server 接入，只设环境变量）。Embedding 侧也补了 `OpenAICompatibleEmbeddingProvider` 满足「可切换」AC，但默认仍用 Transformers.js 不破坏现有索引。
 
+> **⚠️ 推理层默认走 Ollama（非 llama.cpp）**：llama.cpp 在加载从 Ollama 抽出的 Qwen3-8B GGUF 时会**卡死在 "loading model"**（b10330 已知问题，GPU/CPU、加不加 `--embedding`/`--no-mmap` 都复现）。因此 **`start-all.bat` 已改为用本机 Ollama 的 OpenAI 兼容接口（`:11434/v1`）当推理层**——`ollama pull qwen3:8b` 拉模型、`ollama serve` 暴露 API，后端 `OPENAI_BASE_URL` 指向它即可，无需 llama.cpp。llama.cpp 仍可装到任意目录备用。下面 llama.cpp 小节仅作备选参考。
+>
+> **模型来源提示**：若网络环境拦截 HuggingFace（`huggingface.co`，某些代理/公司网络常见），LLM 权重走 **Ollama**（`registry.ollama.ai` 通常可达）；Embedding 模型 `Xenova/multilingual-e5-small` 可改从 **ModelScope**（`modelscope.cn`）取 ONNX 缓存到本地目录。
+
 ### 1. 选 GGUF 模型（按硬件档位）
 
 | 硬件 | 推荐模型 | 大小 | 速度参考 | 说明 |
 |---|---|---|---|---|
-| **N 卡 ≥8GB 显存**（本项目档） | `qwen2.5-7b-instruct-q4_k_m` | ~4.7GB | 几十 tok/s | 中文好、量化均衡，主力推荐 |
-| N 卡 4–6GB 显存 | `qwen2.5-3b-instruct-q4_k_m` | ~2GB | 二十+ tok/s | 显存不够 7b 时的退档 |
-| 核显/无独显，≥16GB 内存 | `qwen2.5-1.5b-instruct-q4_k_m` | ~1GB | 个位数 tok/s | 纯 CPU 推理，能跑但慢 |
+| **N 卡 ≥8GB 显存**（本项目档 / 16GB 卡甜点） | `qwen3-8b-instruct-q4_k_m` | ~5.2GB | 几十 tok/s | Qwen3 推理/中文更强；思考模式已用 `--reasoning off` 适配；本项目与 4060Ti 16GB 的甜点档 |
+| N 卡 4–6GB 显存 | `qwen3-4b-instruct-q4_k_m` | ~3GB | 二十+ tok/s | 显存不够 8b 时的退档 |
+| 核显/无独显，≥16GB 内存 | `qwen3-1.7b-instruct-q4_k_m` | ~1.2GB | 个位数 tok/s | 纯 CPU 推理，能跑但慢 |
 
 量化档位（Q4_K_M 是性价比甜点；Q5/Q6 更准但更慢、Q2/Q3 失真多）。模型从 [HuggingFace](https://huggingface.co/Qwen) 或 [ModelScope](https://modelscope.cn) 下，文件 `.gguf` 放本机任意目录（**不入 git**，已 gitignore）。
 
 ### 2. 装 llama.cpp（用预编译包，不自己编译）
 
-到 https://github.com/ggml-org/llama.cpp/releases 下最新 `llama-<版本>-bin-win-cuda-cu12-x64.zip`（CUDA 版，N 卡用；核显下 `bin-win-avx2-x64.zip`）。解压到如 `C:\llama.cpp\`，里面有 `llama-server.exe`。
+到 https://github.com/ggml-org/llama.cpp/releases 下最新 `llama-<版本>-bin-win-cuda-cu12-x64.zip`（CUDA 版，N 卡用；核显下 `bin-win-avx2-x64.zip`）。解压到任意目录（如 `.\llama.cpp\`），里面有 `llama-server.exe`。
 
 ### 3. 起 llama-server（N 卡 + 7b 档）
 
 ```powershell
 # PowerShell 5.1：环境变量与参数分行，避免分号吞引号坑
-cd C:\llama.cpp
+cd <你的 llama.cpp 目录>
 $env:CUDA_VISIBLE_DEVICES = "0"
 .\llama-server.exe `
-  --model "C:\models\qwen2.5-7b-instruct-q4_k_m.gguf" `
+  --model ".\models\qwen3-8b-q4_k_m.gguf" `
   --host 0.0.0.0 --port 8080 `
   --n-gpu-layers 99 `
   --ctx-size 4096 `
@@ -136,7 +140,7 @@ cd RAG_libraries\backend
 # LLM 切到 llama-server（Adapter：只改环境变量，不改代码）
 $env:LLM_PROVIDER = "openai"
 $env:OPENAI_BASE_URL = "http://localhost:8080/v1"
-$env:OPENAI_MODEL = "qwen2.5-7b-instruct"   # llama-server 用模型文件名/别名
+$env:OPENAI_MODEL = "qwen3-8b-instruct"   # llama-server 用模型文件名/别名
 $env:OPENAI_API_KEY = "not-needed"           # llama-server 不校验，但 Provider 要非空串
 # Embedding 保持 Transformers.js（已验证、不重索引）
 $env:RAG_EMBEDDING = "transformers"

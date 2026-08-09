@@ -28,7 +28,8 @@ export const EMBEDDING_DIM = Number(process.env.RAG_EMBEDDING_DIM ?? 384);
  * all-MiniLM-L6-v2 是英文模型，对中文问句标点过于敏感。
  * 注：Xenova/bge-small-zh-v1.5 仓库缺 ONNX 文件无法用于 Transformers.js。
  */
-export const EMBEDDING_MODEL = "Xenova/multilingual-e5-small";
+export const EMBEDDING_MODEL =
+  process.env.RAG_EMBEDDING_MODEL ?? "Xenova/multilingual-e5-small";
 
 /** 在线模型不可用时的降级提示（配合 try/catch 抛出） */
 export const EMBEDDING_FALLBACK_HINT =

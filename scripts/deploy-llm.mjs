@@ -10,15 +10,16 @@
  *   5. 验证 /v1/models 端点
  *
  * 用法：
- *   node deploy-llm.mjs                    # 默认 Qwen3-8B，装到 C:\llama.cpp + C:\models
+ *   node deploy-llm.mjs                    # 默认 Qwen3-8B，装到 <用户目录>/.cache/rag-llm
  *   node deploy-llm.mjs Qwen2.5-7B         # 指定模型
- *   node deploy-llm.mjs Qwen3-8B C:\custom # 自定义安装目录
+ *   node deploy-llm.mjs Qwen3-8B C:\custom # 自定义安装目录（或设环境变量 RAG_LLAMA_DIR / RAG_MODELS_DIR）
  *
  * 前提：N 卡 + 已装 NVIDIA 驱动（nvidia-smi 可用）
  * 换模型只改 OPENAI_MODEL 环境变量，代码零改动（Adapter 模式）
  */
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { execSync, spawn } from "node:child_process";
+import os from "node:os";
 import { resolve, join } from "node:path";
 
 // ===== 配置 =====
@@ -27,16 +28,16 @@ const CUDA_VERSION = "12.4";
 
 const MODELS = {
   "Qwen3-8B": {
-    url: "https://hf-mirror.com/lm-kit/qwen-3-8b-instruct-gguf/resolve/main/qwen-3-8b-instruct-q4_k_m.gguf",
+    url: "https://huggingface.co/unsloth/Qwen3-8B-Instruct-GGUF/resolve/main/Qwen3-8B-Instruct-Q4_K_M.gguf",
     file: "qwen3-8b-q4_k_m.gguf",
     size: "~5GB",
-    note: "Qwen3-8B Q4_K_M，3080 10GB 显存推荐",
+    note: "Qwen3-8B-Instruct Q4_K_M，4060 Ti 16GB / 通用 N 卡推荐（instruct 版，对话与 RAG 必需）",
   },
   "Qwen2.5-7B": {
-    url: "https://hf-mirror.com/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
+    url: "https://huggingface.co/bartowski/Qwen2.5-7B-Instruct-GGUF/resolve/main/Qwen2.5-7B-Instruct-Q4_K_M.gguf",
     file: "qwen2.5-7b-instruct-q4_k_m.gguf",
     size: "~4.7GB",
-    note: "Qwen2.5-7B Q4_K_M，项目原始模型",
+    note: "Qwen2.5-7B Q4_K_M，旧档退路（显存 <8GB 时用）",
   },
   "Qwen3-4B": {
     url: "https://hf-mirror.com/SonyaCat/Qwen3-4B-Instruct-2507-q4-k-m-gguf/resolve/main/qwen3-4b-instruct-2507-q4-k-m.gguf",
@@ -46,8 +47,10 @@ const MODELS = {
   },
 };
 
-const llamaDir = "C:\\llama.cpp";
-const modelsDir = "C:\\models";
+// 安装目录：默认放用户主目录下的 .cache/rag-llm（与项目仓库解耦，不写死本机绝对路径）。
+// 可用环境变量覆盖：RAG_LLAMA_DIR / RAG_MODELS_DIR
+const llamaDir = process.env.RAG_LLAMA_DIR ?? path.join(os.homedir(), ".cache", "rag-llm", "llama.cpp");
+const modelsDir = process.env.RAG_MODELS_DIR ?? path.join(os.homedir(), ".cache", "rag-llm", "models");
 
 const modelKey = process.argv[2] ?? "Qwen3-8B";
 const model = MODELS[modelKey];
