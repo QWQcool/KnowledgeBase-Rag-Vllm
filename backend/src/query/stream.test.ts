@@ -100,7 +100,7 @@ describe("queryService.streamQuery", () => {
     }
   });
 
-  it("空命中：事件序列 = sources([]) → done(带 message)", async () => {
+  it("空命中：事件序列 = sources([]) → token*(LLM 兜底回答) → done", async () => {
     const service = createQueryService({
       retrieveService: retrieveServiceWith([]),
       llmProvider: new MockLLMProvider(),
@@ -108,15 +108,23 @@ describe("queryService.streamQuery", () => {
 
     const events = await collect(service.streamQuery(REQ));
 
-    expect(events).toHaveLength(2);
+    // 首事件 sources，空数组（无检索命中）
     expect(events[0].type).toBe("sources");
     if (events[0].type !== "sources") return;
     expect(events[0].sources).toEqual([]);
 
-    expect(events[1].type).toBe("done");
-    if (events[1].type !== "done") return;
-    expect(typeof events[1].message).toBe("string");
-    expect(events[1].message!.length).toBeGreaterThan(0);
+    // 中间是 token（LLM 兜底回答），不再是硬编码"未找到" done
+    const tokens = events.slice(1, -1);
+    expect(tokens.length).toBeGreaterThan(0);
+    for (const ev of tokens) {
+      expect(ev.type).toBe("token");
+    }
+
+    // 末事件 done（无 message 字段，正常结束）
+    const last = events[events.length - 1];
+    expect(last.type).toBe("done");
+    if (last.type !== "done") return;
+    expect(last.message).toBeUndefined();
   });
 
   it("LLM 异常：事件序列 = sources(...) → error(message 非空)", async () => {

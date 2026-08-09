@@ -90,4 +90,56 @@ describe("TriviumDBStore", () => {
     const hits = await store.search("kb-2", [1, 0, 0], 5);
     expect(hits).toEqual([]);
   });
+
+  it("findDocumentIdsByFilename：按原始文件名查到文档 id（重启后由 payload 重建）", async () => {
+    await store.upsertChunks("kb-1", [
+      { chunk: makeChunk("a", "docA", 0, "docA"), vector: [1, 0, 0], filename: "a.md" },
+      { chunk: makeChunk("b", "docB", 0, "docB"), vector: [0, 1, 0], filename: "b.md" },
+    ]);
+    // 同库内两个不同文档共享文件名 a.md（模拟重复入库），都应查到
+    await store.upsertChunks("kb-1", [
+      { chunk: makeChunk("a2", "docA2", 0, "docA2"), vector: [1, 0, 0], filename: "a.md" },
+    ]);
+    const ids = await store.findDocumentIdsByFilename("kb-1", "a.md");
+    expect(ids.sort()).toEqual(["docA", "docA2"]);
+    expect(await store.findDocumentIdsByFilename("kb-1", "不存在.md")).toEqual([]);
+  });
+
+  it("deleteDocument：删除某文档全部 chunk，search 不再命中", async () => {
+    await store.upsertChunks("kb-1", [
+      { chunk: makeChunk("docX#0", "X0", 0, "docX"), vector: [1, 0, 0], filename: "x.md" },
+      { chunk: makeChunk("docX#1", "X1", 1, "docX"), vector: [0.9, 0.1, 0], filename: "x.md" },
+      { chunk: makeChunk("docY#0", "Y0", 0, "docY"), vector: [0, 1, 0], filename: "y.md" },
+    ]);
+
+    await store.deleteDocument("kb-1", "docX");
+
+    const hits = await store.search("kb-1", [1, 0, 0], 5);
+    const remaining = hits.map((h) => h.chunk.id);
+    expect(remaining).toEqual(["docY#0"]); // docX 的 chunk 全部消失
+    // 索引同步清理
+    expect(await store.findDocumentIdsByFilename("kb-1", "x.md")).toEqual([]);
+    expect(await store.findDocumentIdsByFilename("kb-1", "y.md")).toEqual(["docY"]);
+  });
+
+  it("同名覆盖端到端：同 filename 二次入库 → 旧文档 chunk 被替换，不产生重复", async () => {
+    // 第一次入库：文档 docV1，2 个 chunk
+    await store.upsertChunks("kb-1", [
+      { chunk: makeChunk("docV1#0", "v1-0", 0, "docV1"), vector: [1, 0, 0], filename: "guide.md" },
+      { chunk: makeChunk("docV1#1", "v1-1", 1, "docV1"), vector: [0.9, 0.1, 0], filename: "guide.md" },
+    ]);
+    expect(await store.findDocumentIdsByFilename("kb-1", "guide.md")).toEqual(["docV1"]);
+
+    // 模拟 ingest 覆盖：查重 → 删旧 → 插新
+    const olds = await store.findDocumentIdsByFilename("kb-1", "guide.md");
+    for (const id of olds) await store.deleteDocument("kb-1", id);
+    await store.upsertChunks("kb-1", [
+      { chunk: makeChunk("docV2#0", "v2-0", 0, "docV2"), vector: [1, 0, 0], filename: "guide.md" },
+    ]);
+
+    // 库中只剩新文档的 1 个 chunk，旧 2 个全清
+    const hits = await store.search("kb-1", [1, 0, 0], 10);
+    expect(hits.map((h) => h.chunk.id)).toEqual(["docV2#0"]);
+    expect(await store.findDocumentIdsByFilename("kb-1", "guide.md")).toEqual(["docV2"]);
+  });
 });

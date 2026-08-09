@@ -20,6 +20,14 @@ export interface EmbeddingProvider {
   embed(texts: string[]): Promise<number[][]>;
 }
 
+/** 写入向量库的单条条目：chunk + 向量 + 可选所属文件名（供同名文档去重索引） */
+export interface VectorEntry {
+  chunk: DocumentChunk;
+  vector: number[];
+  /** 所属文档原始文件名（ingest 时传入，用于按 filename 查重） */
+  filename?: string;
+}
+
 /** 向量库接口（可替换实现：TriviumDB / LanceDB / 内存版 / sqlite-vec） */
 export interface VectorStore {
   /** 初始化（建库/连库），重复调用应幂等 */
@@ -27,7 +35,7 @@ export interface VectorStore {
   /** 写入一批 (chunk, vector) 对；同 id 覆盖 */
   upsertChunks(
     knowledgeBaseId: string,
-    entries: { chunk: DocumentChunk; vector: number[] }[],
+    entries: VectorEntry[],
   ): Promise<void>;
   /** 向量相似检索，按相关度降序返回 topK 条 */
   search(
@@ -37,6 +45,13 @@ export interface VectorStore {
   ): Promise<RetrievalHit[]>;
   /** 清空某个知识库（重建索引用） */
   clear(knowledgeBaseId: string): Promise<void>;
+  /** 按原始文件名查该知识库下的文档 id（同名去重用，无则返回空数组） */
+  findDocumentIdsByFilename(
+    knowledgeBaseId: string,
+    filename: string,
+  ): Promise<string[]>;
+  /** 删除某文档的全部 chunk（同名覆盖：先删旧再插新） */
+  deleteDocument(knowledgeBaseId: string, documentId: string): Promise<void>;
 }
 
 /** LLM 生成接口（可替换实现：OpenAI 兼容 HTTP / llama-server / Mock） */

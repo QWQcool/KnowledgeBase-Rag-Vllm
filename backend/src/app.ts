@@ -18,6 +18,7 @@ import {
   type QueryService,
   type RetrieveService,
 } from "./query/query-service";
+import type { ChatLogWriter } from "./query/chat-log";
 import {
   createProductionDeps,
   mountProductionHandlers,
@@ -34,6 +35,8 @@ import {
 export interface AppDeps {
   retrieveService: RetrieveService;
   llmProvider: LLMProvider;
+  /** 对话日志写入器（生产由 bootstrap 注入 FileChatLogWriter；测试缺省 no-op） */
+  chatLog?: ChatLogWriter;
 }
 
 /** 生产额外路由的处理器签名（bootstrap.ts 提供实现） */
@@ -58,6 +61,7 @@ export function createApp(deps?: Partial<AppDeps>) {
   const queryService: QueryService = createQueryService({
     retrieveService: deps?.retrieveService ?? emptyRetrieveService,
     llmProvider: deps?.llmProvider ?? createLLMProvider(),
+    chatLog: deps?.chatLog,
   });
 
   // ---- 健康检查 ----
@@ -95,7 +99,9 @@ export function createApp(deps?: Partial<AppDeps>) {
       if (!res.ok) {
         return c.json({ error: `llama-server 返回 ${res.status}` }, 502);
       }
-      const data = await res.json();
+      const data = (await res.json()) as {
+        data?: { id: string; meta?: Record<string, unknown> }[];
+      };
       const m = data?.data?.[0];
       if (!m) return c.json({ error: "未发现模型" }, 404);
       // 提炼前端展示字段（meta 是 llama.cpp 的结构化元数据）

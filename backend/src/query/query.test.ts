@@ -51,6 +51,27 @@ function retrieveServiceWith(hits: RetrievalHit[]): RetrieveService {
 }
 
 describe("queryService", () => {
+  it("注入 chatLog 时每次问答都落一条日志（含问题/知识库/来源/答案/耗时）", async () => {
+    const appends: unknown[] = [];
+    const service = createQueryService({
+      retrieveService: retrieveServiceWith(HITS),
+      llmProvider: new MockLLMProvider(),
+      chatLog: { append: (e) => appends.push(e) },
+    });
+
+    await service.query({ question: "什么是 RAG？", knowledgeBaseId: "kb-1" });
+
+    expect(appends).toHaveLength(1);
+    const entry = appends[0] as Record<string, unknown>;
+    expect(entry.question).toBe("什么是 RAG？");
+    expect(entry.knowledgeBaseId).toBe("kb-1");
+    expect(entry.sources).toHaveLength(2);
+    expect(typeof entry.answer).toBe("string");
+    expect((entry.answer as string).length).toBeGreaterThan(0);
+    expect(entry.fallbackNoHits).toBe(false);
+    expect(typeof entry.elapsedMs).toBe("number");
+  });
+
   it("a) 命中 2 条：answer 非空且含检索片段，sources 完整符合 SourceRef 契约", async () => {
     const service = createQueryService({
       retrieveService: retrieveServiceWith(HITS),
@@ -79,7 +100,7 @@ describe("queryService", () => {
     expect(ChatResponse.safeParse(resp).success).toBe(true);
   });
 
-  it("b) 检索为空：answer 明确说未找到，sources 为空数组", async () => {
+  it("b) 检索为空：仍调用 LLM 兜底回答（sources 为空数组，answer 非空）", async () => {
     const service = createQueryService({
       retrieveService: retrieveServiceWith([]),
       llmProvider: new MockLLMProvider(),
@@ -90,8 +111,8 @@ describe("queryService", () => {
       knowledgeBaseId: "kb-1",
     });
 
-    expect(resp.answer).toMatch(/未找到|未检索到/);
     expect(resp.sources).toEqual([]);
+    expect(resp.answer.length).toBeGreaterThan(0);
     expect(ChatResponse.safeParse(resp).success).toBe(true);
   });
 });

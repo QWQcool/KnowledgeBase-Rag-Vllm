@@ -51,7 +51,17 @@ export class IngestService {
       options,
     );
 
-    // 3. 组装 Document + DocumentChunk[]
+    // 3. 同名文档覆盖：同 knowledgeBaseId 下已存在相同 filename → 先删旧文档全部 chunk，
+    //    避免知识库膨胀（重复入库产生多条相同内容的 chunk）
+    const existingIds = await this.opts.vectorStore.findDocumentIdsByFilename(
+      knowledgeBaseId,
+      validated.filename,
+    );
+    for (const oldDocId of existingIds) {
+      await this.opts.vectorStore.deleteDocument(knowledgeBaseId, oldDocId);
+    }
+
+    // 4. 组装 Document + DocumentChunk[]
     const documentId = `doc_${randomUUID()}`;
     const chunks: DocumentChunk[] = rawChunks.map((c, index) => ({
       id: `${documentId}#${index}`,
@@ -61,17 +71,21 @@ export class IngestService {
       ...(c.source ? { source: c.source } : {}),
     }));
 
-    // 4. 向量化 + 入库（只调用 infra 接口，不实现）
+    // 5. 向量化 + 入库（只调用 infra 接口，不实现）
     const vectors = await this.opts.embeddingProvider.embed(
       chunks.map((c) => c.content),
     );
     await this.opts.vectorStore.init(knowledgeBaseId);
     await this.opts.vectorStore.upsertChunks(
       knowledgeBaseId,
-      chunks.map((chunk, i) => ({ chunk, vector: vectors[i] })),
+      chunks.map((chunk, i) => ({
+        chunk,
+        vector: vectors[i],
+        filename: validated.filename,
+      })),
     );
 
-    // 5. 组装响应并过契约校验
+    // 6. 组装响应并过契约校验
     const document: Document = {
       id: documentId,
       filename: validated.filename,

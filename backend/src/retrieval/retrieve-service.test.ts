@@ -34,6 +34,10 @@ function fakeStore(hits: RetrievalHit[]): VectorStore & { searches: number[] } {
       return hits;
     },
     async clear() {},
+    async findDocumentIdsByFilename() {
+      return [];
+    },
+    async deleteDocument() {},
   };
 }
 

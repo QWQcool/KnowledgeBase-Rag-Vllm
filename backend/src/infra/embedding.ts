@@ -87,7 +87,10 @@ export class TransformersEmbeddingProvider implements EmbeddingProvider {
             env.remoteHost = process.env.HF_ENDPOINT;
           }
           // q8 量化模型（model_quantized.onnx）：体积小、下载快、精度足够 RAG 检索
-          return await pipeline("feature-extraction", EMBEDDING_MODEL, {
+          // 模型名运行时读取（而非模块级常量）：bootstrap 智能默认会在启动时
+          // 把 RAG_EMBEDDING_MODEL 指向本地缓存，晚于 config.ts 常量求值，必须动态读
+          const model = process.env.RAG_EMBEDDING_MODEL ?? EMBEDDING_MODEL;
+          return await pipeline("feature-extraction", model, {
             dtype: "q8",
           });
         } catch (err) {
@@ -181,7 +184,7 @@ export class OpenAICompatibleEmbeddingProvider implements EmbeddingProvider {
     const data = (await res.json()) as {
       data?: { embedding?: number[] }[];
     };
-    const vectors = data.data?.map((d) => d.embedding);
+    const vectors = data.data?.map((d) => d.embedding) as number[][];
     if (!vectors || vectors.some((v) => !Array.isArray(v))) {
       throw new Error("Embedding API 返回格式异常：缺少 data[].embedding");
     }

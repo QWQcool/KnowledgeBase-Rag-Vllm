@@ -26,6 +26,8 @@ function makeMocks() {
     upsertChunks: vi.fn(async () => undefined),
     search: vi.fn(async () => []),
     clear: vi.fn(async () => undefined),
+    findDocumentIdsByFilename: vi.fn(async () => []),
+    deleteDocument: vi.fn(async () => undefined),
   };
   return { embeddingProvider, vectorStore };
 }
@@ -116,5 +118,47 @@ describe("IngestService", () => {
     const [kbId] = (vectorStore.upsertChunks as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(kbId).toBe("default");
     expect(res.chunkCount).toBeGreaterThanOrEqual(1);
+  });
+
+  it("同名文档覆盖：先按 filename 查旧文档 → 删除旧 chunk → 只入库新文档", async () => {
+    const { embeddingProvider, vectorStore } = makeMocks();
+    (vectorStore.findDocumentIdsByFilename as ReturnType<typeof vi.fn>).mockResolvedValue([
+      "doc_old1",
+      "doc_old2",
+    ]);
+    const service = new IngestService({ embeddingProvider, vectorStore });
+
+    const res = await service.ingest({
+      filename: "guide.md",
+      content: MD,
+      chunkStrategy: "heading",
+      knowledgeBaseId: "kb-1",
+    });
+
+    // 查重 + 删除旧文档
+    expect(vectorStore.findDocumentIdsByFilename).toHaveBeenCalledWith(
+      "kb-1",
+      "guide.md",
+    );
+    expect(vectorStore.deleteDocument).toHaveBeenCalledTimes(2);
+    expect(vectorStore.deleteDocument).toHaveBeenNthCalledWith(1, "kb-1", "doc_old1");
+    expect(vectorStore.deleteDocument).toHaveBeenNthCalledWith(2, "kb-1", "doc_old2");
+
+    // 入库携带 filename（索引依据），且只插新文档的 chunks
+    const [kbId, entries] = (vectorStore.upsertChunks as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(kbId).toBe("kb-1");
+    expect(entries).toHaveLength(res.chunks.length);
+    expect(entries[0].filename).toBe("guide.md");
+    expect(entries[0].chunk.documentId).toBe(res.document.id);
+  });
+
+  it("无同名文档时不做删除，正常插入", async () => {
+    const { embeddingProvider, vectorStore } = makeMocks();
+    const service = new IngestService({ embeddingProvider, vectorStore });
+
+    await service.ingest({ filename: "fresh.md", content: "new", knowledgeBaseId: "kb-1" });
+
+    expect(vectorStore.findDocumentIdsByFilename).toHaveBeenCalledWith("kb-1", "fresh.md");
+    expect(vectorStore.deleteDocument).not.toHaveBeenCalled();
   });
 });
