@@ -52,6 +52,20 @@ interface ModelInfo {
   } | null;
 }
 
+/** 显存状态（来自 /api/gpu，与后端 GpuStatusResponse 对齐） */
+interface GpuStatus {
+  supported: boolean;
+  totalMiB: number | null;
+  usedMiB: number | null;
+  freeMiB: number | null;
+  currentLevel: string;
+  currentLabel: string;
+  suggestedLevel: string;
+  suggestedLabel: string;
+  safe: boolean;
+  advice: string;
+}
+
 /** 对话框（弹窗）打开状态 */
 interface ModalState {
   type: "model" | "mcp" | "logs" | null;
@@ -152,6 +166,8 @@ function App() {
   const [modal, setModal] = useState<ModalState>({ type: null });
   /** 模型信息数据 */
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
+  /** 显存状态数据（模型信息弹窗内展示） */
+  const [gpuStatus, setGpuStatus] = useState<GpuStatus | null>(null);
   /** MCP 工具数据 */
   const [mcpData, setMcpData] = useState<{
     servers: { name: string; status: string; tools: { name: string; description: string }[] }[];
@@ -353,6 +369,7 @@ function App() {
   const openModelInfo = useCallback(async () => {
     setModal({ type: "model" });
     setModalLoading(true);
+    setGpuStatus(null);
     try {
       const res = await fetch(`${API_BASE}/api/model`);
       if (!res.ok) {
@@ -362,9 +379,15 @@ function App() {
       }
     } catch {
       setModelInfo(null);
-    } finally {
-      setModalLoading(false);
     }
+    // 并行拉取显存状态（失败不影响模型信息展示）
+    try {
+      const gpuRes = await fetch(`${API_BASE}/api/gpu`);
+      if (gpuRes.ok) setGpuStatus((await gpuRes.json()) as GpuStatus);
+    } catch {
+      setGpuStatus(null);
+    }
+    setModalLoading(false);
   }, []);
 
   /** 加载 MCP 工具列表 */
@@ -936,6 +959,17 @@ function App() {
                       <span className="model-v">{modelInfo.meta?.n_embd ?? "未知"}</span>
                     </div>
                   </div>
+                  {gpuStatus && (
+                    <div className={`gpu-status ${gpuStatus.safe ? "gpu-safe" : "gpu-warn"}`}>
+                      <div className="gpu-title">
+                        显存 {gpuStatus.freeMiB != null ? `${gpuStatus.freeMiB} / ${gpuStatus.totalMiB} MiB` : "不可用"}
+                        {gpuStatus.safe ? " · 安全" : " · 不足"}
+                      </div>
+                      <div className="gpu-line">当前档位：{gpuStatus.currentLabel}</div>
+                      <div className="gpu-line">建议档位：{gpuStatus.suggestedLabel}</div>
+                      <div className="gpu-line">{gpuStatus.advice}</div>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="modal-error">无法获取模型信息，请确认 llama-server 已启动</div>

@@ -1,4 +1,5 @@
 @echo off
+setlocal EnableDelayedExpansion
 chcp 65001 >nul
 title RAG Knowledge Base - One Click Start
 echo ========================================
@@ -38,20 +39,22 @@ netstat -ano | findstr ":%OLLAMA_PORT%" | findstr "LISTENING" >nul 2>&1
 if %errorlevel%==0 (
     echo   - Port %OLLAMA_PORT% already in use, skip.
 ) else (
-    REM 纯文本 qwen3:8b，默认 4096 上下文（空闲显存需 ~9.3GB）。
-    REM 显存降级开关：桌面应用占显存导致 OOM 时（llama-server process has terminated），
-    REM   设 RAG_LOW_VRAM=1 → 2048 上下文 + 24 层 GPU（其余层 CPU），
-    REM   实测桌面占 ~5.1GB 时仍稳定（2048ctx 单独用约需 5GB，会再次 OOM，务必带 GPU_LAYERS）。
-    REM   例：set RAG_LOW_VRAM=1 然后运行本脚本。
-    REM 注：qwen3-vl 视觉 warmup 会撑爆显存（4096ctx 时 OOM），如换回 VL 需加
-    REM   set OLLAMA_CONTEXT_LENGTH=2048
+    REM 显存自适应：默认用 scripts/adaptive-ollama.mjs 检测空闲显存自动选档位
+    REM   HIGH = 4096ctx 全 GPU（空闲 ≥9.5GB）/ MID = 2048ctx+24 层（≥4.8GB）/ LOW = 1024ctx+16 层（≥3.4GB）
+    REM 手动锁定低档位：set RAG_LOW_VRAM=1（等价 LOW，无视检测结果）
+    REM 背景：桌面应用占显存时 4096ctx 会 OOM（llama-server process has terminated），
+    REM   所以按"当前空闲显存"选档位，避免启动即崩。
+    set "OLLAMA_LEVEL=HIGH"
     if defined RAG_LOW_VRAM (
-        start "ollama" cmd /k "set OLLAMA_CONTEXT_LENGTH=2048&& set OLLAMA_GPU_LAYERS=24&& %OLLAMA_BIN% serve"
-        echo   - Ollama launching... (RAG_LOW_VRAM=1 → 2048ctx + 24 层 GPU 低显存模式)
+        set "OLLAMA_LEVEL=LOW"
+        echo   - RAG_LOW_VRAM=1 → 强制低显存档位
     ) else (
-        start "ollama" cmd /k "%OLLAMA_BIN% serve"
-        echo   - Ollama launching in new window... (qwen3:8b 纯文本，默认 4096 上下文)
+        for /f "tokens=2 delims==" %%i in ('node "%ROOT%scripts\adaptive-ollama.mjs" 2^>nul') do set "OLLAMA_LEVEL=%%i"
+        if "!OLLAMA_LEVEL!"=="MID" (echo   - 自适应档位：MID（2048ctx + 24 层 GPU）) else if "!OLLAMA_LEVEL!"=="LOW" (echo   - 自适应档位：LOW（1024ctx + 16 层 GPU）) else (echo   - 自适应档位：HIGH（4096ctx 全 GPU）)
     )
+    if "!OLLAMA_LEVEL!"=="MID" (set "OLLAMA_CTX=2048" & set "OLLAMA_LAYERS=24") else if "!OLLAMA_LEVEL!"=="LOW" (set "OLLAMA_CTX=1024" & set "OLLAMA_LAYERS=16") else (set "OLLAMA_CTX=" & set "OLLAMA_LAYERS=")
+    start "ollama" cmd /k "set OLLAMA_CONTEXT_LENGTH=!OLLAMA_CTX!&& set OLLAMA_GPU_LAYERS=!OLLAMA_LAYERS!&& %OLLAMA_BIN% serve"
+    echo   - Ollama launching in new window... (自适应档位 !OLLAMA_LEVEL!)
 )
 echo   - 等待 Ollama 拉起模型（首次约需 10s）...
 timeout /t 8 >nul
@@ -75,7 +78,7 @@ netstat -ano | findstr ":%BACKEND_PORT%" | findstr "LISTENING" >nul 2>&1
 if %errorlevel%==0 (
     echo   - Port %BACKEND_PORT% already in use, skip.
 ) else (
-    start "rag-backend" cmd /k "cd /d %ROOT%backend && set LLM_PROVIDER=openai&& set OPENAI_BASE_URL=http://127.0.0.1:%OLLAMA_PORT%/v1&& set OPENAI_MODEL=qwen3:8b&& set OPENAI_API_KEY=ollama&& set RAG_EMBEDDING=transformers&& set RAG_MIN_SCORE=0.80&& set PORT=%BACKEND_PORT%&& npm run start"
+    start "rag-backend" cmd /k "cd /d %ROOT%backend && set LLM_PROVIDER=openai&& set OPENAI_BASE_URL=http://127.0.0.1:%OLLAMA_PORT%/v1&& set OPENAI_MODEL=qwen3:8b&& set OPENAI_API_KEY=ollama&& set RAG_EMBEDDING=transformers&& set RAG_MIN_SCORE=0.80&& set PORT=%BACKEND_PORT%&& set OLLAMA_CONTEXT_LENGTH=!OLLAMA_CTX!&& set OLLAMA_GPU_LAYERS=!OLLAMA_LAYERS!&& npm run start"
     echo   - Backend launching in new window... (RAG_EMBEDDING_MODEL 由父环境继承：薄膜已设或留空用默认)
 )
 

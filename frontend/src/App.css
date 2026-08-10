@@ -1224,6 +1224,33 @@ body {
   color: var(--fg-strong);
 }
 
+/* 显存状态块（模型信息弹窗内，自适应显存） */
+.gpu-status {
+  margin-top: 0.8rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border);
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+.gpu-safe {
+  background: var(--bg-soft);
+  color: var(--fg-muted);
+}
+.gpu-warn {
+  background: rgba(227, 75, 74, 0.08);
+  border-color: rgba(227, 75, 74, 0.4);
+  color: #a32d2d;
+}
+.gpu-title {
+  font-weight: 500;
+  font-size: 0.85rem;
+  margin-bottom: 0.2rem;
+}
+.gpu-line {
+  overflow-wrap: anywhere;
+}
+
 /* ---- MCP 面板 ---- */
 .mcp-server {
   border: 1px solid var(--border);

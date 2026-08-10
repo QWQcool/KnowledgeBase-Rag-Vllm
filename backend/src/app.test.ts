@@ -246,3 +246,54 @@ describe("GET /api/model（推理层双协议适配）", () => {
     expect(body.raw.source).toBe("ollama");
   });
 });
+
+describe("GET /api/gpu（显存状态与档位建议）", () => {
+  it("注入 mock probe：返回显存/档位/安全状态 JSON", async () => {
+    const app = createApp({
+      gpuProbe: {
+        probe: async () => ({
+          supported: true,
+          totalMiB: 10240,
+          usedMiB: 4000,
+          freeMiB: 6240,
+        }),
+      },
+    });
+    // 模拟当前 MID 档位环境
+    vi.stubEnv("OLLAMA_CONTEXT_LENGTH", "2048");
+    vi.stubEnv("OLLAMA_GPU_LAYERS", "24");
+    const res = await app.request("/api/gpu");
+    vi.unstubAllEnvs();
+
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.supported).toBe(true);
+    expect(body.freeMiB).toBe(6240);
+    expect(body.currentLevel).toBe("MID");
+    expect(body.suggestedLevel).toBe("MID");
+    expect(body.safe).toBe(true);
+    expect(typeof body.advice).toBe("string");
+  });
+
+  it("显存不足时 safe=false 且建议降档", async () => {
+    const app = createApp({
+      gpuProbe: {
+        probe: async () => ({
+          supported: true,
+          totalMiB: 10240,
+          usedMiB: 7240,
+          freeMiB: 3000,
+        }),
+      },
+    });
+    vi.stubEnv("OLLAMA_CONTEXT_LENGTH", "2048");
+    vi.stubEnv("OLLAMA_GPU_LAYERS", "24");
+    const res = await app.request("/api/gpu");
+    vi.unstubAllEnvs();
+
+    const body = await res.json();
+    expect(body.safe).toBe(false);
+    expect(body.suggestedLevel).toBe("LOW");
+    expect(body.advice).toContain("低于当前档位需求");
+  });
+});

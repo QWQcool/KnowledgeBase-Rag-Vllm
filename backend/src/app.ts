@@ -22,6 +22,7 @@ import {
   createProductionDeps,
   mountProductionHandlers,
 } from "./bootstrap";
+import { gpuStatus, type GpuProbe, NvidiaSmiProbe } from "./gpu/gpu-status";
 
 /**
  * 应用工厂：测试与启动共用同一份路由。
@@ -36,6 +37,8 @@ export interface AppDeps {
   llmProvider: LLMProvider;
   /** 对话日志写入器（生产由 bootstrap 注入 FileChatLogWriter；测试缺省 no-op） */
   chatLog?: ChatLogWriter;
+  /** 显存探测（生产缺省 NvidiaSmiProbe；测试可注入 mock） */
+  gpuProbe?: GpuProbe;
 }
 
 /** 生产额外路由的处理器签名（bootstrap.ts 提供实现） */
@@ -188,6 +191,12 @@ export function createApp(deps?: Partial<AppDeps>) {
       ],
     }),
   );
+
+  // GET /api/gpu —— 显存状态与推理档位建议（自适应显存）
+  app.get(`${API_PREFIX}/gpu`, async (c) => {
+    const status = await gpuStatus(deps?.gpuProbe ?? new NvidiaSmiProbe());
+    return c.json(status);
+  });
 
   // POST /api/query —— 问答编排（M3 加流式 SSE）
   app.post(`${API_PREFIX}/query`, async (c) => {
