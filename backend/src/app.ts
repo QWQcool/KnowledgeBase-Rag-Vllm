@@ -22,7 +22,12 @@ import {
   createProductionDeps,
   mountProductionHandlers,
 } from "./bootstrap";
-import { gpuStatus, type GpuProbe, NvidiaSmiProbe } from "./gpu/gpu-status";
+import { gpuStatus, GPU_LEVELS, type GpuLevel, type GpuProbe, NvidiaSmiProbe } from "./gpu/gpu-status";
+import {
+  createMockOllamaManager,
+  type OllamaManager,
+  SpawnOllamaManager,
+} from "./gpu/ollama-manager";
 
 /**
  * 应用工厂：测试与启动共用同一份路由。
@@ -39,6 +44,8 @@ export interface AppDeps {
   chatLog?: ChatLogWriter;
   /** 显存探测（生产缺省 NvidiaSmiProbe；测试可注入 mock） */
   gpuProbe?: GpuProbe;
+  /** Ollama 进程管理（生产缺省 SpawnOllamaManager；测试注入 mock 防杀进程） */
+  ollamaManager?: OllamaManager;
 }
 
 /** 生产额外路由的处理器签名（bootstrap.ts 提供实现） */
@@ -67,6 +74,9 @@ export function createApp(deps?: Partial<AppDeps>) {
     llmProvider: deps?.llmProvider ?? createLLMProvider(),
     chatLog: deps?.chatLog,
   });
+
+  // 运行时切换的档位覆盖（内存态，GET /api/gpu 优先读它；启动档位仍来自 env）
+  let gpuLevelOverride: GpuLevel | null = null;
 
   // ---- 健康检查 ----
   app.get("/health", (c) => {
@@ -194,8 +204,50 @@ export function createApp(deps?: Partial<AppDeps>) {
 
   // GET /api/gpu —— 显存状态与推理档位建议（自适应显存）
   app.get(`${API_PREFIX}/gpu`, async (c) => {
-    const status = await gpuStatus(deps?.gpuProbe ?? new NvidiaSmiProbe());
+    const status = await gpuStatus(
+      deps?.gpuProbe ?? new NvidiaSmiProbe(),
+      process.env,
+      gpuLevelOverride,
+    );
     return c.json(status);
+  });
+
+  // POST /api/gpu/level —— 手动切换推理档位（重启 Ollama，需显存充足）
+  app.post(`${API_PREFIX}/gpu/level`, async (c) => {
+    const raw = await c.req.json().catch(() => null);
+    const level = (raw as { level?: unknown } | null)?.level;
+    if (
+      typeof level !== "string" ||
+      !(level === "HIGH" || level === "MID" || level === "LOW")
+    ) {
+      return c.json({ error: "非法档位：可选 HIGH / MID / LOW" }, 422);
+    }
+    const target = GPU_LEVELS[level as GpuLevel];
+
+    // 显存校验：目标档位在当前"可用显存"下必须可行。
+    // 注意：当前已加载模型会在重启时卸载释放，其占用要算入可用量
+    // （否则模型驻留时会误判"显存不足"拒绝切档）。
+    const probe = deps?.gpuProbe ?? new NvidiaSmiProbe();
+    const manager = deps?.ollamaManager ?? new SpawnOllamaManager();
+    const info = await probe.probe();
+    if (info.supported && info.freeMiB !== null && info.freeMiB < target.minFreeMiB) {
+      const releasable = await manager.estimateOllamaVramMiB();
+      const effectiveFree = info.freeMiB + releasable;
+      if (effectiveFree < target.minFreeMiB) {
+        return c.json(
+          {
+            error: `当前空闲显存 ${info.freeMiB} MiB（含模型释放后 ${effectiveFree} MiB）不足以运行「${target.label}」（需 ≥${target.minFreeMiB} MiB），请先关闭部分占显存软件`,
+          },
+          400,
+        );
+      }
+    }
+
+    const result = await manager.restart(level as GpuLevel);
+    if (result.ok) {
+      gpuLevelOverride = level as GpuLevel;
+    }
+    return c.json({ ok: result.ok, message: result.message, level });
   });
 
   // POST /api/query —— 问答编排（M3 加流式 SSE）

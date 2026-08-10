@@ -101,8 +101,13 @@ export function suggestLevel(freeMiB: number | null): GpuLevelSpec {
   return GPU_LEVELS.LOW;
 }
 
-/** 从进程环境变量推断当前档位（Ollama 是 serve 进程级 env） */
-export function currentLevelFromEnv(env: NodeJS.ProcessEnv = process.env): GpuLevelSpec {
+/** 从进程环境变量推断当前档位（Ollama 是 serve 进程级 env）；
+ *  运行时切换后由 overrideLevel 覆盖（内存态优先，反映实际档位） */
+export function currentLevelFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+  overrideLevel?: GpuLevel | null,
+): GpuLevelSpec {
+  if (overrideLevel && GPU_LEVELS[overrideLevel]) return GPU_LEVELS[overrideLevel];
   const ctx = parseInt(env.OLLAMA_CONTEXT_LENGTH ?? "", 10);
   const layers = parseInt(env.OLLAMA_GPU_LAYERS ?? "", 10);
   if (ctx >= 4096 || Number.isNaN(ctx)) return GPU_LEVELS.HIGH;
@@ -123,15 +128,18 @@ export interface GpuStatusResponse {
   /** 当前档位下显存是否安全（freeMiB >= 当前档位需求） */
   safe: boolean;
   advice: string;
+  /** 档位表（前端渲染切换按钮用） */
+  levels: { level: GpuLevel; label: string; minFreeMiB: number }[];
 }
 
 /** 组装 /api/gpu 响应 */
 export async function gpuStatus(
   probe: GpuProbe = new NvidiaSmiProbe(),
   env: NodeJS.ProcessEnv = process.env,
+  overrideLevel?: GpuLevel | null,
 ): Promise<GpuStatusResponse> {
   const info = await probe.probe();
-  const current = currentLevelFromEnv(env);
+  const current = currentLevelFromEnv(env, overrideLevel);
   const suggested = suggestLevel(info.freeMiB);
   let advice: string;
   let safe = true;
@@ -159,5 +167,10 @@ export async function gpuStatus(
     suggestedLabel: suggested.label,
     safe,
     advice,
+    levels: Object.values(GPU_LEVELS).map((l) => ({
+      level: l.level,
+      label: l.label,
+      minFreeMiB: l.minFreeMiB,
+    })),
   };
 }

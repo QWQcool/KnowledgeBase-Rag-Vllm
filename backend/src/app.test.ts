@@ -297,3 +297,83 @@ describe("GET /api/gpu（显存状态与档位建议）", () => {
     expect(body.advice).toContain("低于当前档位需求");
   });
 });
+
+describe("POST /api/gpu/level（手动切换推理档位）", () => {
+  it("显存充足 → 调 manager 重启并返回 ok，且 GET /api/gpu 反映新档位", async () => {
+    const restartMock = vi.fn(async () => ({ ok: true, message: "已切换", pid: 1 }));
+    const app = createApp({
+      gpuProbe: {
+        probe: async () => ({ supported: true, totalMiB: 10240, usedMiB: 300, freeMiB: 9940 }),
+      },
+      ollamaManager: {
+        restart: restartMock,
+        estimateOllamaVramMiB: async () => 0,
+      },
+    });
+    const res = await app.request("/api/gpu/level", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ level: "HIGH" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(restartMock).toHaveBeenCalledWith("HIGH");
+    // override 生效：GET /api/gpu 的 currentLevel 应为 HIGH
+    const gpuRes = await app.request("/api/gpu");
+    const gpu = await gpuRes.json();
+    expect(gpu.currentLevel).toBe("HIGH");
+  });
+
+  it("显存不足以跑目标档位 → 400 拒绝且不调 manager", async () => {
+    const restartMock = vi.fn();
+    const app = createApp({
+      gpuProbe: {
+        probe: async () => ({ supported: true, totalMiB: 10240, usedMiB: 7240, freeMiB: 3000 }),
+      },
+      ollamaManager: {
+        restart: restartMock,
+        estimateOllamaVramMiB: async () => 0,
+      },
+    });
+    const res = await app.request("/api/gpu/level", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ level: "HIGH" }),
+    });
+    expect(res.status).toBe(400);
+    expect(restartMock).not.toHaveBeenCalled();
+    const body = await res.json();
+    expect(body.error).toContain("不足以运行");
+  });
+
+  it("非法档位 → 422", async () => {
+    const app = createApp();
+    const res = await app.request("/api/gpu/level", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ level: "ULTRA" }),
+    });
+    expect(res.status).toBe(422);
+  });
+
+  it("无 GPU 环境（supported=false）→ 放行（不校验显存，直接切档）", async () => {
+    const restartMock = vi.fn(async () => ({ ok: true, message: "ok", pid: 1 }));
+    const app = createApp({
+      gpuProbe: {
+        probe: async () => ({ supported: false, totalMiB: null, usedMiB: null, freeMiB: null }),
+      },
+      ollamaManager: {
+        restart: restartMock,
+        estimateOllamaVramMiB: async () => 0,
+      },
+    });
+    const res = await app.request("/api/gpu/level", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ level: "MID" }),
+    });
+    expect(res.status).toBe(200);
+    expect(restartMock).toHaveBeenCalledWith("MID");
+  });
+});

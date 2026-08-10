@@ -64,6 +64,7 @@ interface GpuStatus {
   suggestedLabel: string;
   safe: boolean;
   advice: string;
+  levels: { level: string; label: string; minFreeMiB: number }[];
 }
 
 /** 对话框（弹窗）打开状态 */
@@ -365,6 +366,36 @@ function App() {
     [uploadDocument],
   );
 
+  /** 拉取显存状态（打开弹窗 / 点击刷新时调用） */
+  const refreshGpuStatus = useCallback(async () => {
+    try {
+      const gpuRes = await fetch(`${API_BASE}/api/gpu`);
+      if (gpuRes.ok) setGpuStatus((await gpuRes.json()) as GpuStatus);
+    } catch {
+      setGpuStatus(null);
+    }
+  }, []);
+
+  /** 手动切换推理档位（重启 Ollama，显存不足的后端会拒绝） */
+  const switchGpuLevel = useCallback(
+    async (level: string) => {
+      try {
+        const res = await fetch(`${API_BASE}/api/gpu/level`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ level }),
+        });
+        const body = await res.json().catch(() => null);
+        const msg = body?.message ?? body?.error ?? (res.ok ? "切换成功" : "切换失败");
+        alert(`[切换档位] ${msg}`);
+        if (res.ok) await refreshGpuStatus();
+      } catch {
+        alert("[切换档位] 请求失败，请确认后端已启动");
+      }
+    },
+    [refreshGpuStatus],
+  );
+
   /** 加载模型信息（点击模型名触发） */
   const openModelInfo = useCallback(async () => {
     setModal({ type: "model" });
@@ -381,14 +412,9 @@ function App() {
       setModelInfo(null);
     }
     // 并行拉取显存状态（失败不影响模型信息展示）
-    try {
-      const gpuRes = await fetch(`${API_BASE}/api/gpu`);
-      if (gpuRes.ok) setGpuStatus((await gpuRes.json()) as GpuStatus);
-    } catch {
-      setGpuStatus(null);
-    }
+    await refreshGpuStatus();
     setModalLoading(false);
-  }, []);
+  }, [refreshGpuStatus]);
 
   /** 加载 MCP 工具列表 */
   const openMcpPanel = useCallback(async () => {
@@ -963,10 +989,34 @@ function App() {
                     <div className={`gpu-status ${gpuStatus.safe ? "gpu-safe" : "gpu-warn"}`}>
                       <div className="gpu-title">
                         显存 {gpuStatus.freeMiB != null ? `${gpuStatus.freeMiB} / ${gpuStatus.totalMiB} MiB` : "不可用"}
-                        {gpuStatus.safe ? " · 安全" : " · 不足"}
+                        {gpuStatus.supported ? (gpuStatus.safe ? " · 安全" : " · 不足") : ""}
+                        <button className="gpu-btn gpu-refresh" onClick={() => void refreshGpuStatus()}>刷新</button>
                       </div>
                       <div className="gpu-line">当前档位：{gpuStatus.currentLabel}</div>
                       <div className="gpu-line">建议档位：{gpuStatus.suggestedLabel}</div>
+                      {gpuStatus.supported && gpuStatus.levels && (
+                        <div className="gpu-line gpu-switch">
+                          切换：
+                          {gpuStatus.levels.map((lv) => {
+                            const disabled =
+                              lv.level === gpuStatus.currentLevel ||
+                              (gpuStatus.freeMiB != null && gpuStatus.freeMiB < lv.minFreeMiB);
+                            return (
+                              <button
+                                key={lv.level}
+                                className="gpu-btn"
+                                disabled={disabled}
+                                title={disabled && gpuStatus.freeMiB != null && gpuStatus.freeMiB < lv.minFreeMiB
+                                  ? `需空闲显存 ≥ ${lv.minFreeMiB} MiB`
+                                  : lv.label}
+                                onClick={() => void switchGpuLevel(lv.level)}
+                              >
+                                {lv.level}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
                       <div className="gpu-line">{gpuStatus.advice}</div>
                     </div>
                   )}
