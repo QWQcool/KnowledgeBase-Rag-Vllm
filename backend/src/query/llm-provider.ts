@@ -128,8 +128,11 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
 
     const messages = this.buildMessages(params);
 
-    // 思考模式：通过 Qwen3 模板的 enable_thinking 请求级控制
-    // （llama-server 的 --reasoning 是服务端全局开关，请求级必须走 chat_template_kwargs）
+    // 思考模式：仅对 llama.cpp 生效（请求级走 chat_template_kwargs.enable_thinking）。
+    // ⚠️ 坑：Ollama 的 OpenAI 兼容层不认 chat_template_kwargs，传了会直接 500 崩掉
+    //    （llama-server process terminated）——必须按 baseUrl 判断推理层类型。
+    // Ollama 下 qwen3 默认不启用思考，思考开关退化为无操作（前端仍可开关，但模型行为不变）。
+    const isOllama = this.baseUrl.includes("11434") || this.baseUrl.includes("ollama");
     const thinking = params.thinking ?? true;
     const body: Record<string, unknown> = {
       model: this.model,
@@ -137,7 +140,7 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
       temperature: 0.2,
       stream: true,
     };
-    if (!thinking) {
+    if (!thinking && !isOllama) {
       body.chat_template_kwargs = { enable_thinking: false };
     }
 
