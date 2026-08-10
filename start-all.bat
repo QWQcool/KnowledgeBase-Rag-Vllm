@@ -38,11 +38,19 @@ netstat -ano | findstr ":%OLLAMA_PORT%" | findstr "LISTENING" >nul 2>&1
 if %errorlevel%==0 (
     echo   - Port %OLLAMA_PORT% already in use, skip.
 ) else (
-    REM 纯文本 qwen3:8b，无需 2048 限制（默认 4096 上下文）。
+    REM 纯文本 qwen3:8b，默认 4096 上下文（空闲显存需 ~9.3GB）。
+    REM 显存降级开关：桌面应用占显存导致 OOM 时（llama-server process has terminated），
+    REM   设 RAG_LOW_VRAM=1 → 以 2048 上下文启动（实测 ~5GB，稳定）。
+    REM   例：set RAG_LOW_VRAM=1 然后运行本脚本。
     REM 注：qwen3-vl 视觉 warmup 会撑爆显存（4096ctx 时 OOM），如换回 VL 需加
     REM   set OLLAMA_CONTEXT_LENGTH=2048
-    start "ollama" cmd /k "%OLLAMA_BIN% serve"
-    echo   - Ollama launching in new window... (qwen3:8b 纯文本，默认 4096 上下文)
+    if defined RAG_LOW_VRAM (
+        start "ollama" cmd /k "set OLLAMA_CONTEXT_LENGTH=2048&& %OLLAMA_BIN% serve"
+        echo   - Ollama launching... (RAG_LOW_VRAM=1 → 2048 上下文低显存模式)
+    ) else (
+        start "ollama" cmd /k "%OLLAMA_BIN% serve"
+        echo   - Ollama launching in new window... (qwen3:8b 纯文本，默认 4096 上下文)
+    )
 )
 echo   - 等待 Ollama 拉起模型（首次约需 10s）...
 timeout /t 8 >nul
@@ -66,7 +74,7 @@ netstat -ano | findstr ":%BACKEND_PORT%" | findstr "LISTENING" >nul 2>&1
 if %errorlevel%==0 (
     echo   - Port %BACKEND_PORT% already in use, skip.
 ) else (
-    start "rag-backend" cmd /k "cd /d %ROOT%backend && set LLM_PROVIDER=openai&& set OPENAI_BASE_URL=http://127.0.0.1:%OLLAMA_PORT%/v1&& set OPENAI_MODEL=qwen3-vl:8b&& set OPENAI_API_KEY=ollama&& set RAG_EMBEDDING=transformers&& set RAG_MIN_SCORE=0.80&& set PORT=%BACKEND_PORT%&& npm run start"
+    start "rag-backend" cmd /k "cd /d %ROOT%backend && set LLM_PROVIDER=openai&& set OPENAI_BASE_URL=http://127.0.0.1:%OLLAMA_PORT%/v1&& set OPENAI_MODEL=qwen3:8b&& set OPENAI_API_KEY=ollama&& set RAG_EMBEDDING=transformers&& set RAG_MIN_SCORE=0.80&& set PORT=%BACKEND_PORT%&& npm run start"
     echo   - Backend launching in new window... (RAG_EMBEDDING_MODEL 由父环境继承：薄膜已设或留空用默认)
 )
 
