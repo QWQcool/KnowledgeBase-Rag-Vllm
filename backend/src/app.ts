@@ -90,7 +90,9 @@ export function createApp(deps?: Partial<AppDeps>) {
 
   // ================= M2 问答编排 =================
 
-  // GET /api/model —— 模型信息（代理 llama-server /v1/models，前端免跨域）
+  // GET /api/model —— 模型信息（代理推理层，前端免跨域）
+  // 双协议适配：llama.cpp 的 /v1/models 带结构化 meta；Ollama 的 /v1/models 只有
+  // 标准 OpenAI 字段（无 meta），需再探测其原生 /api/tags 补齐参数/量化/上下文等。
   app.get(`${API_PREFIX}/model`, async (c) => {
     const baseUrl = (process.env.OPENAI_BASE_URL ?? "http://127.0.0.1:8080/v1")
       .replace(/\/+$/, "")
@@ -98,22 +100,66 @@ export function createApp(deps?: Partial<AppDeps>) {
     try {
       const res = await fetch(`${baseUrl}/v1/models`);
       if (!res.ok) {
-        return c.json({ error: `llama-server 返回 ${res.status}` }, 502);
+        return c.json({ error: `推理层返回 ${res.status}` }, 502);
       }
       const data = (await res.json()) as {
         data?: { id: string; meta?: Record<string, unknown> }[];
       };
       const m = data?.data?.[0];
       if (!m) return c.json({ error: "未发现模型" }, 404);
-      // 提炼前端展示字段（meta 是 llama.cpp 的结构化元数据）
-      return c.json({
-        id: m.id,
-        meta: m.meta ?? null,
-        raw: { n_vocab: m.meta?.n_vocab, ftype: m.meta?.ftype },
-      });
+      // llama.cpp 格式：meta 存在则直接透传
+      if (m.meta) {
+        return c.json({
+          id: m.id,
+          meta: m.meta,
+          raw: { n_vocab: m.meta.n_vocab, ftype: m.meta.ftype },
+        });
+      }
+      // Ollama 格式：/v1/models 无 meta → 探测 /api/tags 补齐
+      try {
+        const tagsRes = await fetch(`${baseUrl}/api/tags`);
+        if (tagsRes.ok) {
+          const tags = (await tagsRes.json()) as {
+            models?: {
+              name: string;
+              size: number;
+              details?: {
+                parameter_size?: string;
+                quantization_level?: string;
+                context_length?: number;
+                embedding_length?: number;
+              };
+            }[];
+          };
+          const om = tags?.models?.find((x) => x.name === m.id) ?? tags?.models?.[0];
+          if (om) {
+            // "8.2B" → 8.2e9（前端 fmtParams 按 /1e9 显示）
+            const psize = om.details?.parameter_size;
+            const nParams = psize
+              ? Math.round(parseFloat(psize) * 1e9)
+              : undefined;
+            const ctx = om.details?.context_length;
+            return c.json({
+              id: om.name,
+              meta: {
+                n_params: nParams,
+                ftype: om.details?.quantization_level,
+                n_ctx: ctx,
+                n_ctx_train: ctx,
+                n_embd: om.details?.embedding_length,
+                size: om.size,
+              },
+              raw: { source: "ollama" },
+            });
+          }
+        }
+      } catch {
+        // Ollama 探测失败则降级返回基础信息
+      }
+      return c.json({ id: m.id, meta: null, raw: {} });
     } catch {
       return c.json(
-        { error: "无法连接 llama-server，请检查推理层是否启动" },
+        { error: "无法连接推理层，请检查是否启动" },
         502,
       );
     }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   ChatRequest,
   ChatResponse,
@@ -151,5 +151,98 @@ describe("POST /api/retrieve（MCP server 调用的纯检索端点）", () => {
     });
 
     expect(res.status).toBe(422);
+  });
+});
+
+describe("GET /api/model（推理层双协议适配）", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    delete process.env.OPENAI_BASE_URL;
+  });
+
+  it("llama.cpp 格式：/v1/models 带 meta 时直接透传", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: "qwen3-8b.gguf",
+              meta: { n_vocab: 152064, ftype: "Q4_K_M", n_params: 8.2e9 },
+            },
+          ],
+        }),
+      }),
+    );
+    process.env.OPENAI_BASE_URL = "http://127.0.0.1:8080/v1";
+    const app = createApp();
+    const res = await app.request("/api/model");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      id: string;
+      meta: { ftype: string };
+      raw: { n_vocab: number };
+    };
+    expect(body.id).toBe("qwen3-8b.gguf");
+    expect(body.meta.ftype).toBe("Q4_K_M");
+    expect(body.raw.n_vocab).toBe(152064);
+  });
+
+  it("Ollama 格式：/v1/models 无 meta 时经 /api/tags 补齐参数/量化/上下文", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        // 第一次调用：/v1/models → 标准 OpenAI 格式（无 meta）
+        .mockImplementationOnce(() =>
+          Promise.resolve({
+            ok: true,
+            json: async () => ({ data: [{ id: "qwen3:8b" }] }),
+          }),
+        )
+        // 第二次调用：/api/tags → Ollama 原生元数据
+        .mockImplementationOnce(() =>
+          Promise.resolve({
+            ok: true,
+            json: async () => ({
+              models: [
+                {
+                  name: "qwen3:8b",
+                  size: 5225388164,
+                  details: {
+                    parameter_size: "8.2B",
+                    quantization_level: "Q4_K_M",
+                    context_length: 40960,
+                    embedding_length: 4096,
+                  },
+                },
+              ],
+            }),
+          }),
+        ),
+    );
+    process.env.OPENAI_BASE_URL = "http://127.0.0.1:11434/v1";
+    const app = createApp();
+    const res = await app.request("/api/model");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      id: string;
+      meta: {
+        n_params: number;
+        ftype: string;
+        n_ctx: number;
+        n_embd: number;
+        size: number;
+      };
+      raw: { source: string };
+    };
+    expect(body.id).toBe("qwen3:8b");
+    expect(body.meta.n_params).toBe(8.2e9);
+    expect(body.meta.ftype).toBe("Q4_K_M");
+    expect(body.meta.n_ctx).toBe(40960);
+    expect(body.meta.n_embd).toBe(4096);
+    expect(body.meta.size).toBe(5225388164);
+    expect(body.raw.source).toBe("ollama");
   });
 });
