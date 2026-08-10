@@ -38,11 +38,11 @@ netstat -ano | findstr ":%OLLAMA_PORT%" | findstr "LISTENING" >nul 2>&1
 if %errorlevel%==0 (
     echo   - Port %OLLAMA_PORT% already in use, skip.
 ) else (
-    REM 关键：OLLAMA_CONTEXT_LENGTH=2048 防止 qwen3-vl 视觉 warmup 撑爆显存
-    REM （默认 4096 时 warmup 预分配 4.7GB 计算缓冲 + 4.45GB 模型 ≈ 9.8GB，3080 10GB 直接 OOM 崩溃；
-    REM   实测 2048 时稳定，7.6s 正常响应）
-    start "ollama" cmd /k "set OLLAMA_CONTEXT_LENGTH=2048&& %OLLAMA_BIN% serve"
-    echo   - Ollama launching in new window... (OLLAMA_CONTEXT_LENGTH=2048 防显存溢出)
+    REM 纯文本 qwen3:8b，无需 2048 限制（默认 4096 上下文）。
+    REM 注：qwen3-vl 视觉 warmup 会撑爆显存（4096ctx 时 OOM），如换回 VL 需加
+    REM   set OLLAMA_CONTEXT_LENGTH=2048
+    start "ollama" cmd /k "%OLLAMA_BIN% serve"
+    echo   - Ollama launching in new window... (qwen3:8b 纯文本，默认 4096 上下文)
 )
 echo   - 等待 Ollama 拉起模型（首次约需 10s）...
 timeout /t 8 >nul
