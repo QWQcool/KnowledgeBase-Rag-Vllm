@@ -291,7 +291,13 @@ function App() {
       try {
         // 统一用 latin1 字符串承载内容：与后端 Buffer.from(content, "latin1")
         // 完全对齐（md/txt 的 ASCII/UTF-8 文本在 latin1 下字节不变，PDF 二进制可无损还原）
-        const buf = await file.arrayBuffer();
+        // 用 FileReader 读（浏览器/Node 都可靠；jsdom 的 File.arrayBuffer() 会挂起）
+        const buf = await new Promise<ArrayBuffer>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as ArrayBuffer);
+          reader.onerror = () => reject(new Error("读取文件失败"));
+          reader.readAsArrayBuffer(file);
+        });
         const content = new TextDecoder("latin1").decode(buf);
         const res = await fetch(`${API_BASE}/api/ingest`, {
           method: "POST",
