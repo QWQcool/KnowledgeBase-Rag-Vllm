@@ -40,13 +40,14 @@ if %errorlevel%==0 (
 ) else (
     REM 纯文本 qwen3:8b，默认 4096 上下文（空闲显存需 ~9.3GB）。
     REM 显存降级开关：桌面应用占显存导致 OOM 时（llama-server process has terminated），
-    REM   设 RAG_LOW_VRAM=1 → 以 2048 上下文启动（实测 ~5GB，稳定）。
+    REM   设 RAG_LOW_VRAM=1 → 2048 上下文 + 24 层 GPU（其余层 CPU），
+    REM   实测桌面占 ~5.1GB 时仍稳定（2048ctx 单独用约需 5GB，会再次 OOM，务必带 GPU_LAYERS）。
     REM   例：set RAG_LOW_VRAM=1 然后运行本脚本。
     REM 注：qwen3-vl 视觉 warmup 会撑爆显存（4096ctx 时 OOM），如换回 VL 需加
     REM   set OLLAMA_CONTEXT_LENGTH=2048
     if defined RAG_LOW_VRAM (
-        start "ollama" cmd /k "set OLLAMA_CONTEXT_LENGTH=2048&& %OLLAMA_BIN% serve"
-        echo   - Ollama launching... (RAG_LOW_VRAM=1 → 2048 上下文低显存模式)
+        start "ollama" cmd /k "set OLLAMA_CONTEXT_LENGTH=2048&& set OLLAMA_GPU_LAYERS=24&& %OLLAMA_BIN% serve"
+        echo   - Ollama launching... (RAG_LOW_VRAM=1 → 2048ctx + 24 层 GPU 低显存模式)
     ) else (
         start "ollama" cmd /k "%OLLAMA_BIN% serve"
         echo   - Ollama launching in new window... (qwen3:8b 纯文本，默认 4096 上下文)
