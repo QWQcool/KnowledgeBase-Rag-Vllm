@@ -5,7 +5,7 @@
   "type": "module",
   "description": "RAG 知识库问答 · React 前端骨架（M1，占位页）",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
