@@ -9,6 +9,24 @@ import "./App.css";
 /** dev 环境用相对路径，缺省空串即同源（Vite proxy 代理 /api → 后端 3000） */
 const API_BASE = import.meta.env.VITE_API_BASE ?? "";
 
+/**
+ * 等待后端健康恢复（引擎切换后后端自重启，进程有 1~3s 窗口不可用）。
+ * 每 1s 探测一次 /health，成功返回 true；超时返回 false。
+ */
+async function waitForBackend(timeoutMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const res = await fetch(`${API_BASE}/health`);
+      if (res.ok) return true;
+    } catch {
+      /* 后端重启窗口内连接失败，继续等 */
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return false;
+}
+
 /** 三态主题（沿用 churn 规范：system/light/dark） */
 type Theme = "system" | "light" | "dark";
 const THEMES: { key: Theme; label: string }[] = [
@@ -66,6 +84,42 @@ interface GpuStatus {
   advice: string;
   levels: { level: string; label: string; minFreeMiB: number }[];
 }
+
+/** 推理引擎状态（来自 GET /api/llm-engine，与后端 LlmEngineStatus 对齐） */
+interface LlmEngineStatus {
+  engine: "ollama" | "vllm";
+  engines: {
+    ollama: { baseUrl: string; model: string; apiKey: string };
+    vllm: { baseUrl: string; model: string; apiKey: string };
+  };
+  configPath: string;
+  requiresRestart: boolean;
+}
+
+/** 引擎服务状态（来自 GET /api/engine-services，与后端 EngineServiceStatus 对齐） */
+type EngineServiceState = "unknown" | "stopped" | "starting" | "running" | "error";
+interface EngineServiceInfo {
+  engine: "ollama" | "vllm";
+  state: EngineServiceState;
+  pid: number | null;
+  message?: string;
+}
+type EngineServicesStatus = Record<"ollama" | "vllm", EngineServiceInfo>;
+
+/** 引擎服务状态的展示文案与样式 */
+const ENGINE_SERVICE_LABELS: Record<EngineServiceState, { text: string; cls: string }> = {
+  unknown: { text: "未知", cls: "svc-unknown" },
+  stopped: { text: "未运行", cls: "svc-stopped" },
+  starting: { text: "启动中…", cls: "svc-starting" },
+  running: { text: "运行中", cls: "svc-running" },
+  error: { text: "启动失败", cls: "svc-error" },
+};
+
+/** 推理引擎展示元信息 */
+const ENGINE_LABELS: Record<LlmEngineStatus["engine"], string> = {
+  ollama: "Ollama（默认）",
+  vllm: "vLLM",
+};
 
 /** 对话框（弹窗）打开状态 */
 interface ModalState {
@@ -169,6 +223,16 @@ function App() {
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   /** 显存状态数据（模型信息弹窗内展示） */
   const [gpuStatus, setGpuStatus] = useState<GpuStatus | null>(null);
+  /** 推理引擎状态（模型信息弹窗内展示，来自 /api/llm-engine） */
+  const [llmEngine, setLlmEngine] = useState<LlmEngineStatus | null>(null);
+  /** 引擎服务状态（来自 /api/engine-services） */
+  const [engineServices, setEngineServices] = useState<EngineServicesStatus | null>(null);
+  /** 引擎切换进行中 / 错误 / 成功提示 */
+  const [engineBusy, setEngineBusy] = useState(false);
+  const [engineRestarting, setEngineRestarting] = useState(false);
+  const [engineMsg, setEngineMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+    /** 引擎切换阶段：0=无/失败，1=确保服务启动，2=重启后端，3=完成 */
+    const [enginePhase, setEnginePhase] = useState<0 | 1 | 2 | 3>(0);
   /** MCP 工具数据 */
   const [mcpData, setMcpData] = useState<{
     servers: { name: string; status: string; tools: { name: string; description: string }[] }[];
@@ -396,6 +460,118 @@ function App() {
     [refreshGpuStatus],
   );
 
+  /** 加载推理引擎状态（GET /api/llm-engine，失败静默——不阻塞模型弹窗） */
+  const refreshLlmEngine = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/llm-engine`);
+      if (res.ok) {
+        setLlmEngine((await res.json()) as LlmEngineStatus);
+      }
+    } catch {
+      /* 引擎端点不可用时保持 null，UI 隐藏该区块 */
+    }
+  }, []);
+
+  /** 加载引擎服务状态（GET /api/engine-services，失败静默） */
+  const refreshEngineServices = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/engine-services`);
+      if (res.ok) {
+        setEngineServices((await res.json()) as EngineServicesStatus);
+      }
+    } catch {
+      /* 失败保持原状 */
+    }
+  }, []);
+
+  /** 等待目标引擎服务就绪（轮询 /api/engine-services；超时返回 null） */
+  const waitEngineServiceReady = useCallback(
+    async (engine: "ollama" | "vllm", timeoutMs: number): Promise<EngineServiceInfo | null> => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        try {
+          const res = await fetch(`${API_BASE}/api/engine-services`);
+          if (res.ok) {
+            const svc = (await res.json()) as EngineServicesStatus;
+            setEngineServices(svc);
+            const info = svc[engine];
+            if (info.state === "running" || info.state === "error") return info;
+          }
+        } catch {
+          /* 后端重启窗口内可能短暂不可达，继续轮询 */
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+      return null;
+    },
+    [],
+  );
+
+  /** 切换推理引擎：写盘 → 后端自动拉起目标服务并健康轮询 → 就绪后自重启后端 → 前端轮询 /health 恢复 */
+  const switchLlmEngine = useCallback(
+    async (engine: "ollama" | "vllm") => {
+      setEngineBusy(true);
+      setEngineRestarting(false);
+      setEngineMsg(null);
+      setEnginePhase(0);
+      try {
+        const res = await fetch(`${API_BASE}/api/llm-engine`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ engine }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: "切换失败" }));
+          setEngineMsg({ kind: "err", text: err?.error ?? "切换失败" });
+          setEnginePhase(0);
+          return;
+        }
+        setLlmEngine((await res.json()) as LlmEngineStatus);
+        setEngineRestarting(true);
+        // 阶段 1：等待目标引擎服务就绪（后端异步拉起，vLLM 加载模型需 1~3 分钟）
+        setEnginePhase(1);
+        setEngineMsg({
+          kind: "ok",
+          text: `已切换 ${ENGINE_LABELS[engine]}，正在确保服务启动（首次加载模型需 1~3 分钟）…`,
+        });
+        const svc = await waitEngineServiceReady(engine, 360_000);
+        if (!svc) {
+          setEngineRestarting(false);
+          setEnginePhase(0);
+          setEngineMsg({ kind: "err", text: "等待引擎服务启动超时，请查看服务日志" });
+          return;
+        }
+        if (svc.state === "error") {
+          setEngineRestarting(false);
+          setEnginePhase(0);
+          setEngineMsg({ kind: "err", text: `引擎服务启动失败：${svc.message ?? "未知原因"}` });
+          return;
+        }
+        // 阶段 2：服务就绪 → 后端自重启（1~3s 窗口）→ 轮询 /health 恢复
+        setEnginePhase(2);
+        setEngineMsg({ kind: "ok", text: `${ENGINE_LABELS[engine]} 服务已就绪，正在重启后端…` });
+        const recovered = await waitForBackend(60_000);
+        setEngineRestarting(false);
+        if (recovered) {
+          await refreshLlmEngine();
+          await refreshEngineServices();
+          setEnginePhase(3);
+          setEngineMsg({ kind: "ok", text: `后端已重启，${ENGINE_LABELS[engine]} 引擎生效` });
+        } else {
+          setEnginePhase(0);
+          setEngineMsg({ kind: "err", text: "后端重启超时，请手动重启（start-all.bat）" });
+        }
+      } catch {
+        setEnginePhase(0);
+        setEngineMsg({ kind: "err", text: "无法连接后端，切换失败" });
+        setEngineRestarting(false);
+      } finally {
+        setEngineBusy(false);
+      }
+    },
+    [refreshLlmEngine, refreshEngineServices, waitEngineServiceReady],
+  );
+
   /** 加载模型信息（点击模型名触发） */
   const openModelInfo = useCallback(async () => {
     setModal({ type: "model" });
@@ -413,8 +589,12 @@ function App() {
     }
     // 并行拉取显存状态（失败不影响模型信息展示）
     await refreshGpuStatus();
+    // 并行拉取推理引擎状态（失败静默）
+    await refreshLlmEngine();
+    // 并行拉取引擎服务状态（失败静默）
+    await refreshEngineServices();
     setModalLoading(false);
-  }, [refreshGpuStatus]);
+  }, [refreshGpuStatus, refreshLlmEngine, refreshEngineServices]);
 
   /** 加载 MCP 工具列表 */
   const openMcpPanel = useCallback(async () => {
@@ -823,7 +1003,7 @@ function App() {
             </div>
 
             <div className="sidebar-info">
-              本地大模型推理<br />TS 全栈 + C++ llama.cpp<br />检索命中率 100%
+              本地大模型推理<br />TS 全栈 + C++ llama.cpp<br />契约先行 · 可证伪评估
             </div>
           </>
         )}
@@ -985,39 +1165,110 @@ function App() {
                       <span className="model-v">{modelInfo.meta?.n_embd ?? "未知"}</span>
                     </div>
                   </div>
-                  {gpuStatus && (
-                    <div className={`gpu-status ${gpuStatus.safe ? "gpu-safe" : "gpu-warn"}`}>
-                      <div className="gpu-title">
-                        显存 {gpuStatus.freeMiB != null ? `${gpuStatus.freeMiB} / ${gpuStatus.totalMiB} MiB` : "不可用"}
-                        {gpuStatus.supported ? (gpuStatus.safe ? " · 安全" : " · 不足") : ""}
-                        <button className="gpu-btn gpu-refresh" onClick={() => void refreshGpuStatus()}>刷新</button>
+                    {gpuStatus && (() => {
+                      const vllmActive = llmEngine?.engine === "vllm" && engineServices?.vllm?.state === "running";
+                      const safe = vllmActive || gpuStatus.safe;
+                      const advice = vllmActive
+                        ? "vLLM 已占用显存，当前稳定运行。显存余量低是正常现象，不再按 Ollama HIGH 档位告警。"
+                        : gpuStatus.advice;
+                      return (
+                        <div className={`gpu-status ${safe ? "gpu-safe" : "gpu-warn"}`}>
+                          <div className="gpu-title">
+                            显存 {gpuStatus.freeMiB != null ? `${gpuStatus.freeMiB} / ${gpuStatus.totalMiB} MiB` : "不可用"}
+                            {gpuStatus.supported ? (safe ? " · 安全" : " · 不足") : ""}
+                            <button className="gpu-btn gpu-refresh" onClick={() => void refreshGpuStatus()}>刷新</button>
+                          </div>
+                          <div className="gpu-line">当前档位：{gpuStatus.currentLabel}</div>
+                          <div className="gpu-line">建议档位：{gpuStatus.suggestedLabel}</div>
+                          {gpuStatus.supported && gpuStatus.levels && (
+                            <div className="gpu-line gpu-switch">
+                              切换：
+                              {gpuStatus.levels.map((lv) => {
+                                const disabled =
+                                  lv.level === gpuStatus.currentLevel ||
+                                  (gpuStatus.freeMiB != null && gpuStatus.freeMiB < lv.minFreeMiB);
+                                return (
+                                  <button
+                                    key={lv.level}
+                                    className="gpu-btn"
+                                    disabled={disabled}
+                                    title={disabled && gpuStatus.freeMiB != null && gpuStatus.freeMiB < lv.minFreeMiB
+                                      ? `需空闲显存 ≥ ${lv.minFreeMiB} MiB`
+                                      : lv.label}
+                                    onClick={() => void switchGpuLevel(lv.level)}
+                                  >
+                                    {lv.level}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                          <div className="gpu-line">{advice}</div>
+                        </div>
+                      );
+                    })()}
+                  {llmEngine && (
+                    <div className="engine-switch">
+                      <div className="engine-title">
+                        推理引擎：{ENGINE_LABELS[llmEngine.engine]}
+                        <button className="gpu-btn gpu-refresh" onClick={() => void refreshLlmEngine()}>刷新</button>
                       </div>
-                      <div className="gpu-line">当前档位：{gpuStatus.currentLabel}</div>
-                      <div className="gpu-line">建议档位：{gpuStatus.suggestedLabel}</div>
-                      {gpuStatus.supported && gpuStatus.levels && (
-                        <div className="gpu-line gpu-switch">
-                          切换：
-                          {gpuStatus.levels.map((lv) => {
-                            const disabled =
-                              lv.level === gpuStatus.currentLevel ||
-                              (gpuStatus.freeMiB != null && gpuStatus.freeMiB < lv.minFreeMiB);
-                            return (
-                              <button
-                                key={lv.level}
-                                className="gpu-btn"
-                                disabled={disabled}
-                                title={disabled && gpuStatus.freeMiB != null && gpuStatus.freeMiB < lv.minFreeMiB
-                                  ? `需空闲显存 ≥ ${lv.minFreeMiB} MiB`
-                                  : lv.label}
-                                onClick={() => void switchGpuLevel(lv.level)}
-                              >
-                                {lv.level}
-                              </button>
-                            );
-                          })}
+                      <div className="engine-line">
+                        服务状态：
+                        {(["ollama", "vllm"] as const).map((eng) => {
+                          const svc = engineServices?.[eng];
+                          const meta = svc ? ENGINE_SERVICE_LABELS[svc.state] : { text: "未知", cls: "svc-unknown" };
+                          return (
+                            <span key={eng} className={`engine-svc ${meta.cls}`}>
+                              {ENGINE_LABELS[eng]}：{meta.text}
+                              {svc?.state === "error" && svc.message ? `（${svc.message.slice(0, 30)}）` : ""}
+                            </span>
+                          );
+                        })}
+                        <button className="gpu-btn gpu-refresh" onClick={() => void refreshEngineServices()}>刷新</button>
+                      </div>
+                      <div className="engine-line">
+                        切换：
+                        {(["ollama", "vllm"] as const).map((eng) => (
+                          <button
+                            key={eng}
+                            className="gpu-btn"
+                            disabled={eng === llmEngine.engine || engineBusy || engineRestarting}
+                            onClick={() => void switchLlmEngine(eng)}
+                          >
+                            {ENGINE_LABELS[eng]}
+                          </button>
+                        ))}
+                        {engineRestarting && <span className="engine-restarting">切换中…</span>}
+                      </div>
+                        {engineRestarting && (
+                          <div className="engine-progress">
+                            <div className="engine-progress-track">
+                              <div
+                                className="engine-progress-bar"
+                                style={{ width: `${Math.max(10, (enginePhase / 3) * 100)}%` }}
+                              />
+                            </div>
+                            <div className="engine-progress-label">
+                              {enginePhase === 1
+                                ? "阶段 1/3：正在确保服务启动…"
+                                : enginePhase === 2
+                                  ? "阶段 2/3：正在重启后端…"
+                                  : "切换中…"}
+                            </div>
+                          </div>
+                        )}
+                      <div className="engine-line engine-endpoint">
+                        当前：{llmEngine.engines[llmEngine.engine].model} @ {llmEngine.engines[llmEngine.engine].baseUrl}
+                      </div>
+                      {engineMsg && (
+                        <div className={`engine-msg ${engineMsg.kind === "ok" ? "engine-ok" : "engine-err"}`}>
+                          {engineMsg.text}
                         </div>
                       )}
-                      <div className="gpu-line">{gpuStatus.advice}</div>
+                      <div className="engine-line engine-hint">
+                        切换 = 自动拉起目标引擎服务（未运行则后台启动，vLLM 首次加载约 1~3 分钟）+ 自动重启后端
+                      </div>
                     </div>
                   )}
                 </div>

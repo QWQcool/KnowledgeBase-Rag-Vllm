@@ -13,6 +13,7 @@ import { EMBEDDING_DIM } from "./infra/config";
 import { TriviumDBStore } from "./infra/triviumdb-store";
 import { IngestService } from "./ingest/ingest-service";
 import { RetrieveService } from "./retrieval/retrieve-service";
+import type { GpuStatusResponse } from "./gpu/gpu-status";
 
 describe("GET /health", () => {
   it("返回 200 且 status=ok，符合 shared/contract 契约", async () => {
@@ -266,7 +267,7 @@ describe("GET /api/gpu（显存状态与档位建议）", () => {
     vi.unstubAllEnvs();
 
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as GpuStatusResponse;
     expect(body.supported).toBe(true);
     expect(body.freeMiB).toBe(6240);
     expect(body.currentLevel).toBe("MID");
@@ -291,7 +292,7 @@ describe("GET /api/gpu（显存状态与档位建议）", () => {
     const res = await app.request("/api/gpu");
     vi.unstubAllEnvs();
 
-    const body = await res.json();
+    const body = (await res.json()) as GpuStatusResponse;
     expect(body.safe).toBe(false);
     expect(body.suggestedLevel).toBe("LOW");
     expect(body.advice).toContain("低于当前档位需求");
@@ -316,12 +317,12 @@ describe("POST /api/gpu/level（手动切换推理档位）", () => {
       body: JSON.stringify({ level: "HIGH" }),
     });
     expect(res.status).toBe(200);
-    const body = await res.json();
+    const body = (await res.json()) as { ok: boolean };
     expect(body.ok).toBe(true);
     expect(restartMock).toHaveBeenCalledWith("HIGH");
     // override 生效：GET /api/gpu 的 currentLevel 应为 HIGH
     const gpuRes = await app.request("/api/gpu");
-    const gpu = await gpuRes.json();
+    const gpu = (await gpuRes.json()) as GpuStatusResponse;
     expect(gpu.currentLevel).toBe("HIGH");
   });
 
@@ -343,7 +344,7 @@ describe("POST /api/gpu/level（手动切换推理档位）", () => {
     });
     expect(res.status).toBe(400);
     expect(restartMock).not.toHaveBeenCalled();
-    const body = await res.json();
+    const body = (await res.json()) as { error: string };
     expect(body.error).toContain("不足以运行");
   });
 

@@ -382,3 +382,108 @@ describe("多知识库下拉", () => {
     expect(options).toContain("自定义…");
   });
 });
+
+/** 推理引擎切换（GET/PUT /api/llm-engine） */
+describe("推理引擎切换", () => {
+  const llmEngineStatus = {
+    engine: "ollama",
+    engines: {
+      ollama: { baseUrl: "http://127.0.0.1:11434/v1", model: "qwen3:8b", apiKey: "ollama" },
+      vllm: { baseUrl: "http://127.0.0.1:8000/v1", model: "qwen3-8b-awq", apiKey: "EMPTY" },
+    },
+    configPath: "llm-config.json",
+    requiresRestart: true,
+  };
+
+  function mockEngineFetch(putImpl?: (url: string, init?: RequestInit) => Promise<unknown>) {
+    const engineServices = {
+      ollama: { engine: "ollama", state: "running", pid: null },
+      vllm: { engine: "vllm", state: "running", pid: null },
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      if (typeof url === "string" && url.includes("/api/knowledge-bases")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => [], body: null });
+      }
+      if (typeof url === "string" && url.includes("/api/engine-services")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => engineServices, body: null });
+      }
+      if (typeof url === "string" && url.includes("/api/llm-engine") && init?.method === "PUT") {
+        return Promise.resolve(putImpl ? putImpl(url, init) : { ok: true, status: 200, json: async () => ({ ...llmEngineStatus, engine: "vllm" }) });
+      }
+      if (typeof url === "string" && url.includes("/api/llm-engine")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => llmEngineStatus, body: null });
+      }
+      if (typeof url === "string" && url.includes("/api/model")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ id: "qwen3:8b", meta: { n_params: 8_000_000_000, n_ctx: 4096 } }),
+          body: null,
+        });
+      }
+      if (typeof url === "string" && url.includes("/api/gpu")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ supported: true, totalMiB: 16380, usedMiB: 2000, freeMiB: 14380, currentLevel: "HIGH", currentLabel: "HIGH", suggestedLevel: "HIGH", suggestedLabel: "HIGH", safe: true, advice: "", levels: [] }),
+          body: null,
+        });
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({}), body: null });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("打开模型信息弹窗 → 加载并展示当前引擎（Ollama）", async () => {
+    mockEngineFetch();
+    render(<App />);
+
+    // 打开模型信息弹窗：点击模型名（弹窗标题「模型信息」）
+    fireEvent.click(screen.getByRole("button", { name: /模型信息/ }));
+    // 引擎区块出现并显示当前引擎
+    const engineText = await screen.findByText(/推理引擎：Ollama/);
+    expect(engineText).toBeTruthy();
+    expect(screen.getByText(/qwen3:8b @ http:\/\/127\.0\.0\.1:11434/)).toBeTruthy();
+    // 两个切换按钮（当前引擎禁用）
+    expect(screen.getByText("vLLM")).toBeTruthy();
+  });
+
+  it("切换到 vLLM → PUT 请求体 {engine:vllm} → 展示重启提示", async () => {
+    const fetchMock = mockEngineFetch();
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /模型信息/ }));
+    await screen.findByText(/推理引擎：Ollama/);
+
+    fireEvent.click(screen.getByText("vLLM"));
+    // 断言 PUT 请求体
+    await waitFor(() => {
+      const putCalls = fetchMock.mock.calls.filter(
+        ([url, init]) => typeof init === "object" && init?.method === "PUT" && String(url ?? "").includes("/api/llm-engine"),
+      );
+      expect(putCalls.length).toBeGreaterThan(0);
+      const body = JSON.parse(String(putCalls[0][1]?.body ?? "{}"));
+      expect(body.engine).toBe("vllm");
+    });
+    // 成功提示（后端自动重启 + 前端轮询恢复后的最终态）
+    expect(await screen.findByText(/后端已重启，vLLM 引擎生效/)).toBeTruthy();
+  });
+
+  it("切换失败（500）→ 展示错误信息", async () => {
+    mockEngineFetch(() =>
+      Promise.resolve({
+        ok: false,
+        status: 500,
+        json: async () => ({ error: "写入 llm-config.json 失败，请检查文件是否只读/被占用" }),
+      }),
+    );
+    render(<App />);
+
+    fireEvent.click(screen.getByRole("button", { name: /模型信息/ }));
+    await screen.findByText(/推理引擎：Ollama/);
+
+    fireEvent.click(screen.getByText("vLLM"));
+    expect(await screen.findByText(/写入 llm-config\.json 失败/)).toBeTruthy();
+  });
+});

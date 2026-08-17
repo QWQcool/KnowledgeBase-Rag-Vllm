@@ -284,3 +284,71 @@ export const Page = z.object({
   total: z.number().int().nonnegative(),
 });
 export type Page = z.infer<typeof Page>;
+
+/* ===================== 推理引擎切换（Agent 2：UI 引擎切换） ===================== */
+
+/**
+ * 推理引擎标识（与 llm-config.json 的 engine 字段/engines key 对齐）。
+ * 新增引擎需同步扩展：llm-config.json、backend config.ts 的 LlmEngineName、
+ * start-all.bat 的 --engine 校验、前端切换控件的可选项。
+ */
+export const LlmEngine = z.enum(["ollama", "vllm"]);
+export type LlmEngine = z.infer<typeof LlmEngine>;
+
+/** 单个引擎的 OpenAI 兼容端点配置（与 llm-config.json 的 engines.* 对齐） */
+export const LlmEngineEndpoint = z.object({
+  baseUrl: z.string().optional(),
+  model: z.string().optional(),
+  apiKey: z.string().optional(),
+});
+export type LlmEngineEndpoint = z.infer<typeof LlmEngineEndpoint>;
+
+/**
+ * GET /api/llm-engine 响应 & PUT /api/llm-engine 成功响应（同一形状）：
+ * - engine：当前**生效**引擎（RAG_LLM_ENGINE 环境变量会覆盖 llm-config.json 的 engine 字段，
+ *   所以可能与文件里存的值不同——前端提示文案会说明这点）。
+ * - engines：llm-config.json 中全部引擎端点配置（原样透传）。
+ * - configPath：llm-config.json 的实际路径（用于展示/排障）。
+ * - requiresRestart：推理层是重资源进程，切换后必须重启后端才生效，恒为 true。
+ */
+export const LlmEngineStatus = z.object({
+  engine: LlmEngine,
+  engines: z.record(LlmEngine, LlmEngineEndpoint),
+  configPath: z.string().min(1),
+  requiresRestart: z.literal(true),
+});
+export type LlmEngineStatus = z.infer<typeof LlmEngineStatus>;
+
+/** PUT /api/llm-engine 请求体：只允许写 engine 字段（不写环境变量） */
+export const LlmEngineUpdateRequest = z.object({
+  engine: LlmEngine,
+});
+export type LlmEngineUpdateRequest = z.infer<typeof LlmEngineUpdateRequest>;
+
+/* ===================== 引擎服务管理（后台任务：启动/停止/健康轮询） ===================== */
+
+/**
+ * 引擎服务进程状态机：
+ * - unknown：未探测过（后端刚启动，尚未查询）
+ * - stopped：服务未运行（端口不通）
+ * - starting：正在拉起服务进程（健康轮询中）
+ * - running：服务已就绪（健康端点响应）
+ * - error：启动失败或健康轮询超时
+ */
+export const EngineServiceState = z.enum(["unknown", "stopped", "starting", "running", "error"]);
+export type EngineServiceState = z.infer<typeof EngineServiceState>;
+
+/** 单个引擎服务的运行状态（GET /api/engine-services 与 start/stop 响应共用） */
+export const EngineServiceStatus = z.object({
+  engine: LlmEngine,
+  state: EngineServiceState,
+  /** 服务进程 PID（spawn 后可知；端口探测的存量进程可为 null） */
+  pid: z.number().nullable(),
+  /** 人类可读信息（错误原因 / 启动进度等） */
+  message: z.string().optional(),
+});
+export type EngineServiceStatus = z.infer<typeof EngineServiceStatus>;
+
+/** GET /api/engine-services 响应：ollama 与 vllm 两个引擎的服务状态 */
+export const EngineServicesStatus = z.record(LlmEngine, EngineServiceStatus);
+export type EngineServicesStatus = z.infer<typeof EngineServicesStatus>;

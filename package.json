@@ -13,6 +13,6 @@
     "jsdom": "^30.0.1"
   },
   "dependencies": {
-    "triviumdb": "^0.7.3"
+    "triviumdb": "^0.7.4"
   }
 }

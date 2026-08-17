@@ -1,4 +1,5 @@
 import type { LLMProvider } from "../infra/types";
+import { getLlmConfigField } from "../infra/config";
 
 /**
  * query/llm-provider.ts —— LLMProvider 接口实现（Strategy 模式）
@@ -65,12 +66,12 @@ export class OpenAICompatibleLLMProvider implements LLMProvider {
   private readonly apiKey: string;
 
   constructor(config: OpenAICompatibleLLMConfig = {}) {
-    // 优先显式配置，其次环境变量；不带 /v1 尾巴，统一在请求时拼
-    this.baseUrl = (config.baseUrl ?? process.env.OPENAI_BASE_URL ?? "https://api.openai.com/v1")
+    // 配置优先级：显式入参 > llm-config.json > 环境变量；不带 /v1 尾巴，统一在请求时拼
+    this.baseUrl = (config.baseUrl ?? getLlmConfigField("baseUrl") ?? "https://api.openai.com/v1")
       .replace(/\/+$/, "")
       .replace(/\/v1$/, "");
-    this.model = config.model ?? process.env.OPENAI_MODEL ?? "";
-    this.apiKey = config.apiKey ?? process.env.OPENAI_API_KEY ?? "";
+    this.model = config.model ?? getLlmConfigField("model") ?? "";
+    this.apiKey = config.apiKey ?? getLlmConfigField("apiKey") ?? "";
   }
 
   async generate(params: {

@@ -16,6 +16,25 @@ set "OLLAMA_STANDARD=%LOCALAPPDATA%\Programs\Ollama\ollama.exe"
 set OLLAMA_PORT=11434
 set BACKEND_PORT=3000
 set FRONTEND_PORT=5173
+REM vLLM 默认端口（与 llm-config.json 的 vllm.baseUrl 一致）
+set VLLM_PORT=8000
+
+REM ======== 命令行参数：--engine ollama|vllm ========
+REM 默认 ollama（行为与旧版完全一致）；--engine vllm 跳过 Ollama 启动，
+REM 并让后端经 RAG_LLM_ENGINE=vllm 读取 llm-config.json 里的 vllm 配置。
+REM 注：用 for 遍历 %*（不用 shift，shift 在括号块内不可用），支持任意参数顺序。
+set "ENGINE=ollama"
+set "PENDING_ENGINE=0"
+for %%a in (%*) do (
+    if "!PENDING_ENGINE!"=="1" (
+        set "ENGINE=%%a"
+        set "PENDING_ENGINE=0"
+    )
+    if /i "%%a"=="--engine" set "PENDING_ENGINE=1"
+)
+set "PENDING_ENGINE="
+if /i "%ENGINE%"=="vllm" (set "ENGINE=vllm") else (set "ENGINE=ollama")
+echo   Engine: %ENGINE% (--engine ollama|vllm)
 
 REM ======== 推理层说明 ========
 REM 默认走 Ollama（OpenAI 兼容接口 :11434/v1）。
@@ -31,8 +50,12 @@ REM     - 都没有                          → 保持未定义，backend 自�
 REM   注：C:\models\e5-small 仅作「本机本地缓存默认路径」，可用
 REM       RAG_EMBEDDING_LOCAL_CACHE 覆盖；克隆到别的机器若无此目录会优雅回退自动下载。
 
-REM ======== Step 1: 启动 Ollama（若未运行）========
-echo [1/3] Starting Ollama (LLM inference via OpenAI-compatible API)...
+REM ======== Step 1: 启动推理层（按 --engine 分派）========
+echo [1/3] Starting inference engine (engine=%ENGINE%)...
+if /i "%ENGINE%"=="vllm" goto :step1_vllm
+
+REM ---- engine=ollama（默认，原行为）----
+echo Starting Ollama (LLM inference via OpenAI-compatible API)...
 where ollama >nul 2>&1
 if %errorlevel%==0 (set OLLAMA_BIN=ollama) else (if exist "%OLLAMA_STANDARD%" (set OLLAMA_BIN=%OLLAMA_STANDARD%) else (goto :no_ollama))
 netstat -ano | findstr ":%OLLAMA_PORT%" | findstr "LISTENING" >nul 2>&1
@@ -58,6 +81,19 @@ if %errorlevel%==0 (
 )
 echo   - 等待 Ollama 拉起模型（首次约需 10s）...
 timeout /t 8 >nul
+goto :step1_done
+
+:step1_vllm
+echo Skipping Ollama. vLLM 需单独启动（默认端口 %VLLM_PORT%）。
+netstat -ano | findstr ":%VLLM_PORT%" | findstr "LISTENING" >nul 2>&1
+if %errorlevel%==0 (
+    echo   - Port %VLLM_PORT% already in use, assume vLLM is running.
+) else (
+    echo   - Port %VLLM_PORT% not listening：vLLM 尚未启动。
+    echo   - 请先运行 start-vllm.bat 启动 vLLM（或用 scripts\vllm-check.mjs 检查环境），
+    echo   - 确认 8000 端口就绪后再重跑本脚本。
+)
+:step1_done
 
 REM ======== Embedding 模型路径薄膜（有则继承，无则本地默认/自动下载）========
 if defined RAG_EMBEDDING_MODEL (
@@ -73,12 +109,20 @@ if defined RAG_EMBEDDING_MODEL (
 )
 
 REM ======== Step 2: 启动后端（Hono + RAG 流水线）========
-echo [2/3] Starting backend (Hono + RAG pipeline)...
+echo [2/3] Starting backend (Hono + RAG pipeline, engine=%ENGINE%)...
+REM 后端 LLM 端点环境变量：默认指向 Ollama；--engine vllm 时注入 vllm 端点回退。
+REM 注：llm-config.json 存在时后端以 JSON 为准（RAG_LLM_ENGINE=vllm 切换引擎），
+REM 下面这些 set 是 JSON 缺失时的兜底，保证两种来源行为一致。
+if /i "%ENGINE%"=="vllm" (
+    set "LLM_ENGINE_ENV=set LLM_PROVIDER=openai&& set RAG_LLM_ENGINE=vllm&& set OPENAI_BASE_URL=http://127.0.0.1:%VLLM_PORT%/v1&& set OPENAI_MODEL=qwen3-8b-awq&& set OPENAI_API_KEY=EMPTY"
+) else (
+    set "LLM_ENGINE_ENV=set LLM_PROVIDER=openai&& set OPENAI_BASE_URL=http://127.0.0.1:%OLLAMA_PORT%/v1&& set OPENAI_MODEL=qwen3:8b&& set OPENAI_API_KEY=ollama"
+)
 netstat -ano | findstr ":%BACKEND_PORT%" | findstr "LISTENING" >nul 2>&1
 if %errorlevel%==0 (
     echo   - Port %BACKEND_PORT% already in use, skip.
 ) else (
-    start "rag-backend" cmd /k "cd /d %ROOT%backend && set LLM_PROVIDER=openai&& set OPENAI_BASE_URL=http://127.0.0.1:%OLLAMA_PORT%/v1&& set OPENAI_MODEL=qwen3:8b&& set OPENAI_API_KEY=ollama&& set RAG_EMBEDDING=transformers&& set RAG_MIN_SCORE=0.80&& set PORT=%BACKEND_PORT%&& set OLLAMA_CONTEXT_LENGTH=!OLLAMA_CTX!&& set OLLAMA_GPU_LAYERS=!OLLAMA_LAYERS!&& npm run start"
+    start "rag-backend" cmd /k "cd /d %ROOT%backend && !LLM_ENGINE_ENV!&& set RAG_EMBEDDING=transformers&& set RAG_MIN_SCORE=0.80&& set PORT=%BACKEND_PORT%&& set OLLAMA_CONTEXT_LENGTH=!OLLAMA_CTX!&& set OLLAMA_GPU_LAYERS=!OLLAMA_LAYERS!&& npm run start"
     echo   - Backend launching in new window... (RAG_EMBEDDING_MODEL 由父环境继承：薄膜已设或留空用默认)
 )
 

@@ -6,12 +6,30 @@ import {
   ChatRequest,
   ChatResponse,
   Document,
+  EngineServiceStatus,
+  EngineServicesStatus,
   HealthStatus,
+  LlmEngine,
+  LlmEngineEndpoint,
+  LlmEngineStatus,
+  LlmEngineUpdateRequest,
   STREAM_QUERY_PATH,
   ok,
 } from "@rag/shared";
 import type { LLMProvider } from "./infra/types";
+import {
+  getLlmConfigField,
+  loadLlmConfig,
+  resolveActiveEngine,
+  resolveLlmConfigPath,
+  updateLlmConfigEngine,
+} from "./infra/config";
 import { createLLMProvider } from "./query/llm-provider";
+import { scheduleSelfRestart } from "./restart";
+import {
+  DefaultEngineServiceManager,
+  type EngineServiceManager,
+} from "./engine-service";
 import {
   createQueryService,
   type QueryService,
@@ -46,6 +64,10 @@ export interface AppDeps {
   gpuProbe?: GpuProbe;
   /** Ollama 进程管理（生产缺省 SpawnOllamaManager；测试注入 mock 防杀进程） */
   ollamaManager?: OllamaManager;
+  /** 引擎切换后的自重启调度（生产缺省：非 test 环境自动重启后端；测试注入 no-op） */
+  restartScheduler?: () => void;
+  /** 推理引擎服务管理（启动/停止/健康轮询；测试注入 mock 防真启动 vLLM/Ollama） */
+  engineServiceManager?: EngineServiceManager;
 }
 
 /** 生产额外路由的处理器签名（bootstrap.ts 提供实现） */
@@ -64,10 +86,61 @@ const emptyRetrieveService: RetrieveService = {
   },
 };
 
+/** 缺省引擎服务管理器：读 llm-config.json 端点配置；测试环境禁 spawn（不真启动服务） */
+function createDefaultEngineServiceManager(): EngineServiceManager {
+  const cfg = loadLlmConfig();
+  const engines: Record<LlmEngine, LlmEngineEndpoint> = {
+    ollama: {
+      baseUrl: cfg?.engines.ollama?.baseUrl ?? "http://127.0.0.1:11434/v1",
+      model: cfg?.engines.ollama?.model ?? "qwen3:8b",
+      apiKey: cfg?.engines.ollama?.apiKey,
+    },
+    vllm: {
+      baseUrl: cfg?.engines.vllm?.baseUrl ?? "http://127.0.0.1:8000/v1",
+      model: cfg?.engines.vllm?.model ?? "qwen3-8b-awq",
+      apiKey: cfg?.engines.vllm?.apiKey,
+    },
+  };
+  return new DefaultEngineServiceManager({
+    engines,
+    allowSpawn: process.env.NODE_ENV !== "test",
+  });
+}
+
+/** 确保目标引擎服务运行；就绪后触发后端自重启（切换流程的最后一步） */
+async function ensureEngineAndRestart(
+  engine: LlmEngine,
+  serviceManager: EngineServiceManager,
+  scheduler: () => void,
+): Promise<void> {
+  try {
+    const before = await serviceManager.getStatus(engine);
+    if (before.state !== "running") {
+      await serviceManager.start(engine); // 内部健康轮询直到就绪/超时（vLLM 最长 5 分钟）
+    }
+    // 服务就绪（或已 running）→ 重启后端加载新引擎配置
+    scheduler();
+  } catch (err) {
+    console.error(
+      `[engine-service] 启动 ${engine} 失败：`,
+      err instanceof Error ? err.message : err,
+    );
+    // 启动失败不重启后端：保持旧引擎可用，前端会看到 error 状态
+  }
+}
+
 export function createApp(deps?: Partial<AppDeps>) {
   const app = new Hono();
 
   app.use(`${API_PREFIX}/*`, cors());
+
+  // 引擎切换后的自重启：生产默认自动重启（响应发出后 600ms 拉起新进程），测试环境 no-op
+  const restartScheduler: () => void =
+    deps?.restartScheduler ?? (process.env.NODE_ENV === "test" ? () => {} : scheduleSelfRestart);
+
+  // 引擎服务管理：生产默认真实管理（可 spawn vLLM/Ollama），测试环境禁 spawn
+  const engineServiceManager: EngineServiceManager =
+    deps?.engineServiceManager ?? createDefaultEngineServiceManager();
 
   const queryService: QueryService = createQueryService({
     retrieveService: deps?.retrieveService ?? emptyRetrieveService,
@@ -107,7 +180,8 @@ export function createApp(deps?: Partial<AppDeps>) {
   // 双协议适配：llama.cpp 的 /v1/models 带结构化 meta；Ollama 的 /v1/models 只有
   // 标准 OpenAI 字段（无 meta），需再探测其原生 /api/tags 补齐参数/量化/上下文等。
   app.get(`${API_PREFIX}/model`, async (c) => {
-    const baseUrl = (process.env.OPENAI_BASE_URL ?? "http://127.0.0.1:8080/v1")
+    // 端点优先级：llm-config.json → 环境变量 → 默认 8080（与 llm-provider 同一事实源）
+    const baseUrl = (getLlmConfigField("baseUrl") ?? "http://127.0.0.1:8080/v1")
       .replace(/\/+$/, "")
       .replace(/\/v1$/, "");
     try {
@@ -201,6 +275,94 @@ export function createApp(deps?: Partial<AppDeps>) {
       ],
     }),
   );
+
+  // ================= 推理引擎切换（llm-config.json 持久化） =================
+
+  // GET /api/llm-engine —— 当前生效引擎 + 全量配置 + 配置文件路径
+  app.get(`${API_PREFIX}/llm-engine`, (c) => {
+    const file = loadLlmConfig();
+    if (!file) {
+      return c.json(
+        { error: `llm-config.json（${resolveLlmConfigPath()}）不存在或已损坏` },
+        500,
+      );
+    }
+    // engine 取「当前生效」值：RAG_LLM_ENGINE 环境变量会覆盖 JSON 的 engine 字段
+    const body = LlmEngineStatus.parse({
+      engine: resolveActiveEngine(file),
+      engines: file.engines,
+      configPath: resolveLlmConfigPath(),
+      requiresRestart: true,
+    });
+    return c.json(body);
+  });
+
+  // PUT /api/llm-engine —— 切换引擎：仅改写 llm-config.json 的 engine 字段（不写环境变量）。
+  // 推理层是重资源进程，无法热切换——保存成功后需重启后端才生效（前端提示用户）。
+  app.put(`${API_PREFIX}/llm-engine`, async (c) => {
+    const raw = await c.req.json().catch(() => null);
+    const parsed = LlmEngineUpdateRequest.safeParse(raw);
+    if (!parsed.success) {
+      return c.json(
+        { error: "非法引擎：可选 ollama / vllm", issues: parsed.error.issues },
+        400,
+      );
+    }
+    try {
+      const file = updateLlmConfigEngine(parsed.data.engine);
+      const body = LlmEngineStatus.parse({
+        engine: resolveActiveEngine(file),
+        engines: file.engines,
+        configPath: resolveLlmConfigPath(),
+        requiresRestart: true,
+      });
+      const resp = c.json(body);
+      // 异步：确保目标引擎服务运行（未跑则自动拉起 + 健康轮询）→ 就绪后自重启后端加载新配置
+      // 响应先返回；服务启动进度由前端轮询 GET /api/engine-services 获取
+      setTimeout(
+        () => void ensureEngineAndRestart(parsed.data.engine, engineServiceManager, restartScheduler),
+        0,
+      );
+      return resp;
+    } catch (err) {
+      return c.json(
+        {
+          error: "写入 llm-config.json 失败，请检查文件是否只读/被占用",
+          detail: err instanceof Error ? err.message : String(err),
+        },
+        500,
+      );
+    }
+  });
+
+  // GET /api/engine-services —— 两个引擎服务的实时状态（端口探测，不缓存）
+  app.get(`${API_PREFIX}/engine-services`, async (c) => {
+    const [ollama, vllm] = await Promise.all([
+      engineServiceManager.getStatus("ollama"),
+      engineServiceManager.getStatus("vllm"),
+    ]);
+    return c.json(EngineServicesStatus.parse({ ollama, vllm }));
+  });
+
+  // POST /api/engine-services/:engine/start —— 异步拉起服务并健康轮询，立即返回当前状态
+  const svcStarting = new Set<LlmEngine>();
+  app.post(`${API_PREFIX}/engine-services/:engine/start`, async (c) => {
+    const raw = c.req.param("engine") as LlmEngine;
+    if (!LlmEngine.safeParse(raw).success) return c.json({ error: "非法引擎" }, 400);
+    if (!svcStarting.has(raw)) {
+      svcStarting.add(raw);
+      // 不 await：start 内部轮询可能持续数分钟，前端通过 GET 轮询进度
+      void engineServiceManager.start(raw).finally(() => svcStarting.delete(raw));
+    }
+    return c.json(EngineServiceStatus.parse(await engineServiceManager.getStatus(raw)));
+  });
+
+  // POST /api/engine-services/:engine/stop —— 停止服务进程
+  app.post(`${API_PREFIX}/engine-services/:engine/stop`, async (c) => {
+    const raw = c.req.param("engine") as LlmEngine;
+    if (!LlmEngine.safeParse(raw).success) return c.json({ error: "非法引擎" }, 400);
+    return c.json(EngineServiceStatus.parse(await engineServiceManager.stop(raw)));
+  });
 
   // GET /api/gpu —— 显存状态与推理档位建议（自适应显存）
   app.get(`${API_PREFIX}/gpu`, async (c) => {

@@ -1277,6 +1277,93 @@ body {
   float: right;
 }
 
+/* ---- 推理引擎切换（模型信息弹窗内） ---- */
+.engine-switch {
+  margin-top: 0.8rem;
+  padding: 0.7rem 0.9rem;
+  border-radius: 0.6rem;
+  border: 1px solid var(--border);
+  background: var(--bg-soft);
+  font-size: 0.8rem;
+  line-height: 1.7;
+}
+.engine-title {
+  font-weight: 500;
+  font-size: 0.85rem;
+  margin-bottom: 0.2rem;
+}
+.engine-line {
+  overflow-wrap: anywhere;
+}
+.engine-endpoint {
+  color: var(--fg-muted);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 0.72rem;
+}
+.engine-hint {
+  color: var(--fg-muted);
+  font-size: 0.72rem;
+}
+.engine-restarting {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  color: #b07d2b;
+  animation: engine-pulse 1.2s ease-in-out infinite;
+}
+@keyframes engine-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.engine-progress {
+  margin-top: 0.5rem;
+}
+.engine-progress-track {
+  height: 0.35rem;
+  background: var(--bg-soft, rgba(128, 128, 128, 0.15));
+  border-radius: 0.2rem;
+  overflow: hidden;
+}
+.engine-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #b07d2b, #d9a441);
+  border-radius: 0.2rem;
+  transition: width 0.4s ease;
+}
+.engine-progress-label {
+  margin-top: 0.2rem;
+  font-size: 0.72rem;
+  color: #b07d2b;
+}
+
+/* 引擎服务状态徽标 */
+.engine-svc {
+  margin-right: 0.8rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0.3rem;
+  font-size: 0.72rem;
+}
+.svc-running { background: rgba(60, 150, 90, 0.12); border: 1px solid rgba(60, 150, 90, 0.35); color: #2e7d4f; }
+.svc-stopped { background: rgba(120, 120, 120, 0.1); border: 1px solid rgba(120, 120, 120, 0.3); color: #666; }
+.svc-starting { background: rgba(176, 125, 43, 0.12); border: 1px solid rgba(176, 125, 43, 0.4); color: #b07d2b; animation: engine-pulse 1.2s ease-in-out infinite; }
+.svc-error { background: rgba(190, 60, 60, 0.12); border: 1px solid rgba(190, 60, 60, 0.4); color: #a63c3c; }
+.svc-unknown { background: rgba(120, 120, 120, 0.08); border: 1px dashed rgba(120, 120, 120, 0.3); color: #888; }
+.engine-msg {
+  margin-top: 0.3rem;
+  padding: 0.3rem 0.5rem;
+  border-radius: 0.4rem;
+  font-size: 0.75rem;
+}
+.engine-ok {
+  background: rgba(60, 150, 90, 0.1);
+  border: 1px solid rgba(60, 150, 90, 0.35);
+  color: #2e7d4f;
+}
+.engine-err {
+  background: rgba(227, 75, 74, 0.08);
+  border: 1px solid rgba(227, 75, 74, 0.4);
+  color: #a32d2d;
+}
+
 /* ---- MCP 面板 ---- */
 .mcp-server {
   border: 1px solid var(--border);

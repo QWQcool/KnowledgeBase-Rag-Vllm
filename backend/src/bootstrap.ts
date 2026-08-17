@@ -11,6 +11,7 @@ import {
 import { Hono } from "hono";
 import type { AppDeps, AppHandlers } from "./app";
 import { createEmbeddingProvider } from "./infra/embedding";
+import { getActiveLlmConfig } from "./infra/config";
 import { TriviumDBStore } from "./infra/triviumdb-store";
 import { IngestService } from "./ingest/ingest-service";
 import { RetrieveService } from "./retrieval/retrieve-service";
@@ -44,9 +45,15 @@ export function resolveSmartDefaults(): {
   llm: "mock" | "openai";
 } {
   // LLM：默认本机 Ollama（OpenAI 兼容接口）；无 Ollama 也可显式设 LLM_PROVIDER=mock
+  // 端点优先级：llm-config.json > 环境变量 > 内置默认（与 config.ts 一致）
   const llm =
     (process.env.LLM_PROVIDER as "mock" | "openai" | undefined) ?? "openai";
-  if (process.env.LLM_PROVIDER === undefined) {
+  const llmCfg = getActiveLlmConfig();
+  if (llmCfg !== null && llm === "openai") {
+    console.log(
+      `[bootstrap] llm-config.json → engine=${llmCfg.engine}（${llmCfg.baseUrl} / ${llmCfg.model}）`,
+    );
+  } else if (process.env.LLM_PROVIDER === undefined) {
     process.env.OPENAI_BASE_URL ??= "http://127.0.0.1:11434/v1";
     process.env.OPENAI_MODEL ??= "qwen3:8b";
     process.env.OPENAI_API_KEY ??= "ollama";
