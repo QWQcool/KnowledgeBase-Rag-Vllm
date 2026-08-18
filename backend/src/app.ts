@@ -8,6 +8,7 @@ import {
   Document,
   EngineServiceStatus,
   EngineServicesStatus,
+  GRAPH_QUERY_PATH,
   HealthStatus,
   LlmEngine,
   LlmEngineEndpoint,
@@ -36,6 +37,7 @@ import {
   type RetrieveService,
 } from "./query/query-service";
 import type { ChatLogWriter } from "./query/chat-log";
+import type { AgenticRagService } from "./agentic/agentic-rag";
 import {
   createProductionDeps,
   mountProductionHandlers,
@@ -68,6 +70,8 @@ export interface AppDeps {
   restartScheduler?: () => void;
   /** 推理引擎服务管理（启动/停止/健康轮询；测试注入 mock 防真启动 vLLM/Ollama） */
   engineServiceManager?: EngineServiceManager;
+  /** LangGraph Agentic RAG 服务（生产由 bootstrap 注入；缺省不启用 /api/query/graph） */
+  agenticRagService?: AgenticRagService;
 }
 
 /** 生产额外路由的处理器签名（bootstrap.ts 提供实现） */
@@ -147,6 +151,9 @@ export function createApp(deps?: Partial<AppDeps>) {
     llmProvider: deps?.llmProvider ?? createLLMProvider(),
     chatLog: deps?.chatLog,
   });
+
+  // LangGraph Agentic RAG 服务（生产由 bootstrap 注入；测试可注入假服务）
+  const agenticRagService = deps?.agenticRagService;
 
   // 运行时切换的档位覆盖（内存态，GET /api/gpu 优先读它；启动档位仍来自 env）
   let gpuLevelOverride: GpuLevel | null = null;
@@ -446,6 +453,23 @@ export function createApp(deps?: Partial<AppDeps>) {
     });
   });
 
+
+  // POST /api/query/graph —— LangGraph Agentic RAG（独立增强端点，保留快速 /api/query）
+  app.post(GRAPH_QUERY_PATH, async (c) => {
+    if (!agenticRagService) {
+      return c.json({ error: "Agentic RAG 未启用：生产环境由 bootstrap 注入服务" }, 501);
+    }
+    const raw = await c.req.json().catch(() => null);
+    const parsed = ChatRequest.safeParse(raw);
+    if (!parsed.success) {
+      return c.json(
+        { error: "非法请求体", issues: parsed.error.issues },
+        422,
+      );
+    }
+    const response = await agenticRagService.query(parsed.data);
+    return c.json(ChatResponse.parse(response));
+  });
   return app;
 }
 

@@ -147,6 +147,10 @@ export type ChatResponse = z.infer<typeof ChatResponse>;
  */
 export const STREAM_QUERY_PATH = `${API_PREFIX}/query/stream`;
 
+/** LangGraph Agentic RAG 端点：POST /api/query/graph（独立于快速线性 RAG） */
+export const GRAPH_QUERY_PATH = `${API_PREFIX}/query/graph`;
+
+
 /** sources 事件：检索完成、LLM 生成前发出，前端据此渲染引用列表 */
 export const SourcesEvent = z.object({
   type: z.literal("sources"),

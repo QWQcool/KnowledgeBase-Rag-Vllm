@@ -17,6 +17,7 @@ import { IngestService } from "./ingest/ingest-service";
 import { RetrieveService } from "./retrieval/retrieve-service";
 import { createLLMProvider } from "./query/llm-provider";
 import { FileChatLogWriter, readChatLogs } from "./query/chat-log";
+import { createProductionAgenticRagService } from "./agentic/agentic-rag";
 
 /**
  * bootstrap.ts —— 生产依赖组装（编排层）
@@ -103,10 +104,13 @@ export function createProductionDeps(
   );
   const retrieveService = new RetrieveService(embedding, store);
   const llmProvider = createLLMProvider(cfg.llm);
+  // RAG_GRAPH_ENABLED=0/false 可完全关闭 LangGraph Agentic RAG（端点返回 501，不创建图服务）
+  const agenticRagService =
+    process.env.RAG_GRAPH_ENABLED === "0" || process.env.RAG_GRAPH_ENABLED === "false"
+      ? undefined
+      : createProductionAgenticRagService({ retrieveService, llmProvider });
   // 对话日志：生产落盘到 backend/data/chat-logs/（data/ 已 gitignore，不进 git）
   const chatLog = new FileChatLogWriter();
-
-  // ingest 依赖注入到路由处理器（AppHandlers 里接 /api/ingest）
   const ingestService = new IngestService({
     embeddingProvider: embedding,
     vectorStore: store,
@@ -170,7 +174,7 @@ export function createProductionDeps(
     },
   };
 
-  return { deps: { retrieveService, llmProvider, chatLog }, handlers };
+  return { deps: { retrieveService, llmProvider, chatLog, agenticRagService }, handlers };
 }
 
 /** 生产路由挂载：把 handlers 注册到 app（app.ts 里统一调用） */

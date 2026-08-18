@@ -95,6 +95,10 @@ if %errorlevel%==0 (
 )
 :step1_done
 
+REM 可被外部启动器覆盖：RAG_EMBEDDING / RAG_MIN_SCORE 已设置则继承，否则用推荐默认
+if not defined RAG_EMBEDDING set "RAG_EMBEDDING=transformers"
+if not defined RAG_MIN_SCORE set "RAG_MIN_SCORE=0.80"
+
 REM ======== Embedding 模型路径薄膜（有则继承，无则本地默认/自动下载）========
 if defined RAG_EMBEDDING_MODEL (
     echo   - 沿用已设置的 RAG_EMBEDDING_MODEL=%RAG_EMBEDDING_MODEL%
@@ -122,7 +126,7 @@ netstat -ano | findstr ":%BACKEND_PORT%" | findstr "LISTENING" >nul 2>&1
 if %errorlevel%==0 (
     echo   - Port %BACKEND_PORT% already in use, skip.
 ) else (
-    start "rag-backend" cmd /k "cd /d %ROOT%backend && !LLM_ENGINE_ENV!&& set RAG_EMBEDDING=transformers&& set RAG_MIN_SCORE=0.80&& set PORT=%BACKEND_PORT%&& set OLLAMA_CONTEXT_LENGTH=!OLLAMA_CTX!&& set OLLAMA_GPU_LAYERS=!OLLAMA_LAYERS!&& npm run start"
+    start "rag-backend" cmd /k "cd /d %ROOT%backend && !LLM_ENGINE_ENV!&& set RAG_EMBEDDING=!RAG_EMBEDDING!&& set RAG_MIN_SCORE=!RAG_MIN_SCORE!&& set PORT=%BACKEND_PORT%&& set OLLAMA_CONTEXT_LENGTH=!OLLAMA_CTX!&& set OLLAMA_GPU_LAYERS=!OLLAMA_LAYERS!&& npm run start"
     echo   - Backend launching in new window... (RAG_EMBEDDING_MODEL 由父环境继承：薄膜已设或留空用默认)
 )
 
